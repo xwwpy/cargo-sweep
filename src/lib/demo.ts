@@ -112,6 +112,9 @@ export async function demoApplyCargoSource(url: string): Promise<ApplyCargoSourc
 let demoCargoHome = "C:\\Users\\demo\\.cargo";
 let demoCargoHomeEnvSet = false;
 let demoCargoHomeLinkTarget: string | null = null;
+let demoRustupHome = "C:\\Users\\demo\\.rustup";
+let demoRustupHomeEnvSet = false;
+let demoRustupHomeLinkTarget: string | null = null;
 
 export async function demoCargoHomeStatus(): Promise<CargoHomeStatus> {
   await new Promise((resolve) => window.setTimeout(resolve, 300));
@@ -120,7 +123,7 @@ export async function demoCargoHomeStatus(): Promise<CargoHomeStatus> {
     default: "C:\\Users\\demo\\.cargo",
     source: demoCargoHomeEnvSet ? "environment" : "default",
     cargoBin: `${demoCargoHome}\\bin`,
-    rustupHome: "C:\\Users\\demo\\.rustup",
+    rustupHome: demoRustupHome,
     pathContainsCargoBin: true,
     linkExists: Boolean(demoCargoHomeLinkTarget),
     linkTarget: demoCargoHomeLinkTarget,
@@ -128,6 +131,16 @@ export async function demoCargoHomeStatus(): Promise<CargoHomeStatus> {
       Boolean(demoCargoHomeLinkTarget) &&
       demoCargoHomeLinkTarget?.toLowerCase() === demoCargoHome.toLowerCase(),
     shellProfile: null,
+    rustup: {
+      current: demoRustupHome,
+      default: "C:\\Users\\demo\\.rustup",
+      source: demoRustupHomeEnvSet ? "environment" : "default",
+      linkExists: Boolean(demoRustupHomeLinkTarget),
+      linkTarget: demoRustupHomeLinkTarget,
+      linkMatches:
+        Boolean(demoRustupHomeLinkTarget) &&
+        demoRustupHomeLinkTarget?.toLowerCase() === demoRustupHome.toLowerCase(),
+    },
   };
 }
 
@@ -145,8 +158,26 @@ export async function demoMigrateCargoHome(
   };
 }
 
+export async function demoMigrateRustupHome(
+  target: string,
+  createLink: boolean,
+): Promise<CargoHomeMigrationResult> {
+  await new Promise((resolve) => window.setTimeout(resolve, 1400));
+  demoRustupHome = target;
+  demoRustupHomeEnvSet = true;
+  demoRustupHomeLinkTarget = createLink ? target : null;
+  return {
+    output: `已迁移 Rustup 数据到 ${target}${createLink ? "，并创建旧路径链接" : ""}`,
+    status: await demoCargoHomeStatus(),
+  };
+}
+
 export async function demoPickCargoHomeFolder(): Promise<string> {
   return "D:\\cargo-home";
+}
+
+export async function demoPickRustupHomeFolder(): Promise<string> {
+  return "D:\\rustup-home";
 }
 
 const DEMO_HOST = "x86_64-pc-windows-msvc";

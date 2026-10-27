@@ -124,6 +124,15 @@ export interface RustInstallationProbe {
   rustupPath: string | null;
 }
 
+export interface HomeLocationStatus {
+  current: string;
+  default: string;
+  source: string;
+  linkExists: boolean;
+  linkTarget: string | null;
+  linkMatches: boolean;
+}
+
 export interface CargoHomeStatus {
   current: string;
   default: string;
@@ -135,6 +144,7 @@ export interface CargoHomeStatus {
   linkTarget: string | null;
   linkMatches: boolean;
   shellProfile: string | null;
+  rustup: HomeLocationStatus;
 }
 
 export interface CargoHomeMigrationResult {

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.4] - 2026-10-28
+
+### 新功能
+
+- 支持更改 `RUSTUP_HOME` 并一键迁移 Rustup 工具链和下载缓存
+- `RUSTUP_HOME` 支持设置用户环境变量、可选旧路径链接和迁移失败回滚
+- 自动识别 `CARGO_HOME` 与 `RUSTUP_HOME` 两个旧路径链接
+- 环境变量面板同时展示 `CARGO_HOME`、`RUSTUP_HOME` 和 `PATH` 的存储状态
+
+### 优化
+
+- CARGO_HOME 与 RUSTUP_HOME 采用独立迁移、独立链接和独立状态展示
+- RUSTUP_HOME 迁移完成后自动刷新工具链状态
+
 ## [0.4.3] - 2026-10-28
 
 ### 新功能

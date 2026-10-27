@@ -23,7 +23,9 @@ import {
   demoInstallRustup,
   demoInstallRustToolchain,
   demoMigrateCargoHome,
+  demoMigrateRustupHome,
   demoPickCargoHomeFolder,
+  demoPickRustupHomeFolder,
   demoProbeRustInstallation,
   demoRoots,
   demoRustToolchainStatus,
@@ -117,6 +119,22 @@ export async function migrateCargoHome(
   });
 }
 
+export async function migrateRustupHome(
+  target: string,
+  createLink: boolean,
+): Promise<CargoHomeMigrationResult> {
+  if (isDemoMode()) {
+    return demoMigrateRustupHome(target, createLink);
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<CargoHomeMigrationResult>("migrate_rustup_home", {
+    target,
+    createLink,
+  });
+}
+
 export async function pickCargoHomeFolder(): Promise<string | null> {
   if (isDemoMode()) {
     return demoPickCargoHomeFolder();
@@ -128,6 +146,21 @@ export async function pickCargoHomeFolder(): Promise<string | null> {
     directory: true,
     multiple: false,
     title: "选择新的 CARGO_HOME 目录",
+  });
+  return typeof selection === "string" ? selection : null;
+}
+
+export async function pickRustupHomeFolder(): Promise<string | null> {
+  if (isDemoMode()) {
+    return demoPickRustupHomeFolder();
+  }
+  if (!isTauriRuntime()) {
+    return null;
+  }
+  const selection = await open({
+    directory: true,
+    multiple: false,
+    title: "选择新的 RUSTUP_HOME 目录",
   });
   return typeof selection === "string" ? selection : null;
 }

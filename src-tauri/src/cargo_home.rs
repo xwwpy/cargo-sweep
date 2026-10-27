@@ -9,6 +9,17 @@ use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HomeLocationStatus {
+    pub current: String,
+    pub default: String,
+    pub source: String,
+    pub link_exists: bool,
+    pub link_target: Option<String>,
+    pub link_matches: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CargoHomeStatus {
     pub current: String,
     pub default: String,
@@ -20,6 +31,49 @@ pub struct CargoHomeStatus {
     pub link_target: Option<String>,
     pub link_matches: bool,
     pub shell_profile: Option<String>,
+    pub rustup: HomeLocationStatus,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum HomeKind {
+    Cargo,
+    Rustup,
+}
+
+impl HomeKind {
+    fn env_var(self) -> &'static str {
+        match self {
+            Self::Cargo => "CARGO_HOME",
+            Self::Rustup => "RUSTUP_HOME",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Cargo => "CARGO_HOME",
+            Self::Rustup => "RUSTUP_HOME",
+        }
+    }
+
+    fn default_name(self) -> &'static str {
+        match self {
+            Self::Cargo => ".cargo",
+            Self::Rustup => ".rustup",
+        }
+    }
+
+    fn config_name(self) -> &'static str {
+        match self {
+            Self::Cargo => "cargo-home.txt",
+            Self::Rustup => "rustup-home.txt",
+        }
+    }
+
+    fn default_path(self) -> Result<PathBuf, String> {
+        dirs::home_dir()
+            .map(|home| home.join(self.default_name()))
+            .ok_or_else(|| "无法定位用户目录。".to_string())
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -30,10 +84,30 @@ pub struct CargoHomeMigrationResult {
 }
 
 pub fn status() -> Result<CargoHomeStatus, String> {
-    let default = default_cargo_home()?;
-    let env_home = env::var_os("CARGO_HOME").map(PathBuf::from);
+    let cargo = home_status(HomeKind::Cargo)?;
+    let rustup = home_status(HomeKind::Rustup)?;
+    let cargo_bin = PathBuf::from(&cargo.current).join("bin");
+
+    Ok(CargoHomeStatus {
+        current: cargo.current.clone(),
+        default: cargo.default.clone(),
+        source: cargo.source.clone(),
+        cargo_bin: display(&cargo_bin),
+        rustup_home: rustup.current.clone(),
+        path_contains_cargo_bin: path_contains(&cargo_bin),
+        link_exists: cargo.link_exists,
+        link_target: cargo.link_target.clone(),
+        link_matches: cargo.link_matches,
+        shell_profile: shell_profile().map(|path| display(&path)),
+        rustup,
+    })
+}
+
+fn home_status(kind: HomeKind) -> Result<HomeLocationStatus, String> {
+    let default = kind.default_path()?;
+    let env_home = env::var_os(kind.env_var()).map(PathBuf::from);
     let saved_home = if env_home.is_none() {
-        saved_cargo_home()
+        saved_home(kind)
     } else {
         None
     };
@@ -42,11 +116,11 @@ pub fn status() -> Result<CargoHomeStatus, String> {
         .or_else(|| saved_home.clone())
         .unwrap_or_else(|| default.clone());
     if saved_home.is_some() {
-        env::set_var("CARGO_HOME", &current);
-        prepend_path(&current.join("bin"));
+        env::set_var(kind.env_var(), &current);
+        if matches!(kind, HomeKind::Cargo) {
+            prepend_path(&current.join("bin"));
+        }
     }
-    let cargo_bin = current.join("bin");
-    let rustup_home = rustup_home()?;
     let (link_exists, link_target) = link_state(&default);
     let link_matches = link_exists
         && canonical(&default)
@@ -54,7 +128,7 @@ pub fn status() -> Result<CargoHomeStatus, String> {
             .map(|(left, right)| left == right)
             .unwrap_or(false);
 
-    Ok(CargoHomeStatus {
+    Ok(HomeLocationStatus {
         current: display(&current),
         default: display(&default),
         source: if env_home.is_some() {
@@ -64,39 +138,57 @@ pub fn status() -> Result<CargoHomeStatus, String> {
         } else {
             "default".into()
         },
-        cargo_bin: display(&cargo_bin),
-        rustup_home: display(&rustup_home),
-        path_contains_cargo_bin: path_contains(&cargo_bin),
         link_exists,
         link_target: link_target.map(|path| display(&path)),
         link_matches,
-        shell_profile: shell_profile().map(|path| display(&path)),
     })
 }
 
 pub fn migrate(target: String, create_link: bool) -> Result<CargoHomeMigrationResult, String> {
-    let before = status()?;
-    let default = default_cargo_home()?;
+    migrate_home(HomeKind::Cargo, target, create_link)
+}
+
+pub fn migrate_rustup(
+    target: String,
+    create_link: bool,
+) -> Result<CargoHomeMigrationResult, String> {
+    migrate_home(HomeKind::Rustup, target, create_link)
+}
+
+fn migrate_home(
+    kind: HomeKind,
+    target: String,
+    create_link: bool,
+) -> Result<CargoHomeMigrationResult, String> {
+    let before = home_status(kind)?;
+    let default = kind.default_path()?;
     let current = PathBuf::from(&before.current);
     if is_link(&current) {
-        return Err("当前 CARGO_HOME 已经是一个链接，无需再次迁移。".into());
+        return Err(format!(
+            "当前 {} 已经是一个链接，无需再次迁移。",
+            kind.label()
+        ));
     }
 
     let target = expand_tilde(&target);
     if !target.is_absolute() {
-        return Err("请选择绝对路径作为新的 CARGO_HOME。".into());
+        return Err(format!("请选择绝对路径作为新的 {}。", kind.label()));
     }
     if same_path(&target, &current) {
-        return Err("新目录与当前 CARGO_HOME 相同。".into());
+        return Err(format!("新目录与当前 {} 相同。", kind.label()));
     }
     if same_path(&target, &default) {
-        return Err("新目录不能是默认的 ~/.cargo。".into());
+        return Err(format!("新目录不能是默认的 ~/{}。", kind.default_name()));
     }
 
     let source = canonical(&current).unwrap_or(current.clone());
     let target = canonical_or_self(&target);
     if target.starts_with(&source) || source.starts_with(&target) {
-        return Err("新目录不能包含当前 CARGO_HOME，也不能位于当前 CARGO_HOME 内。".into());
+        return Err(format!(
+            "新目录不能包含当前 {}，也不能位于当前 {} 内。",
+            kind.label(),
+            kind.label()
+        ));
     }
     if target.exists() {
         if !target.is_dir() {
@@ -109,10 +201,16 @@ pub fn migrate(target: String, create_link: bool) -> Result<CargoHomeMigrationRe
         }
     }
     if create_link && is_link(&default) {
-        return Err("默认路径 ~/.cargo 已存在链接，请先确认当前链接状态。".into());
+        return Err(format!(
+            "默认路径 ~/{} 已存在链接，请先确认当前链接状态。",
+            kind.default_name()
+        ));
     }
     if create_link && default.exists() && !same_path(&default, &source) {
-        return Err("默认路径 ~/.cargo 已存在，无法创建链接。请先选择不创建链接。".into());
+        return Err(format!(
+            "默认路径 ~/{} 已存在，无法创建链接。请先选择不创建链接。",
+            kind.default_name()
+        ));
     }
 
     let mut files = 0u64;
@@ -120,12 +218,14 @@ pub fn migrate(target: String, create_link: bool) -> Result<CargoHomeMigrationRe
     if source.exists() {
         (files, bytes) = copy_tree(&source, &target)?;
     } else {
-        fs::create_dir_all(&target).map_err(|error| format!("无法创建新的 CARGO_HOME：{error}"))?;
+        fs::create_dir_all(&target)
+            .map_err(|error| format!("无法创建新的 {}：{error}", kind.label()))?;
     }
 
     let backup = if source.exists() {
         let backup = backup_path(&source);
-        fs::rename(&source, &backup).map_err(|error| format!("无法移走旧 CARGO_HOME：{error}"))?;
+        fs::rename(&source, &backup)
+            .map_err(|error| format!("无法移走旧 {}：{error}", kind.label()))?;
         Some(backup)
     } else {
         None
@@ -140,7 +240,7 @@ pub fn migrate(target: String, create_link: bool) -> Result<CargoHomeMigrationRe
         link_created = true;
     }
 
-    let env_output = match set_cargo_home_environment(&target) {
+    let env_output = match set_home_environment(kind, &target) {
         Ok(output) => output,
         Err(error) => {
             if link_created {
@@ -151,11 +251,13 @@ pub fn migrate(target: String, create_link: bool) -> Result<CargoHomeMigrationRe
         }
     };
 
-    env::set_var("CARGO_HOME", &target);
-    prepend_path(&target.join("bin"));
-    let saved_output = match save_cargo_home(&target) {
+    env::set_var(kind.env_var(), &target);
+    if matches!(kind, HomeKind::Cargo) {
+        prepend_path(&target.join("bin"));
+    }
+    let saved_output = match save_home(kind, &target) {
         Ok(()) => String::new(),
-        Err(error) => format!("；保存应用内 CARGO_HOME 失败：{error}"),
+        Err(error) => format!("；保存应用内 {} 失败：{error}", kind.label()),
     };
 
     let mut cleanup_warning = String::new();
@@ -173,32 +275,40 @@ pub fn migrate(target: String, create_link: bool) -> Result<CargoHomeMigrationRe
     };
     Ok(CargoHomeMigrationResult {
         output: format!(
-            "已迁移 {files} 个文件（{}），CARGO_HOME = {}；{link_text}；{env_output}{saved_output}{cleanup_warning}",
+            "已迁移 {files} 个文件（{}），{} = {}；{link_text}；{env_output}{saved_output}{cleanup_warning}",
             format_bytes(bytes),
+            kind.label(),
             display(&target)
         ),
         status,
     })
 }
 
-pub fn apply_saved_cargo_home() -> Option<PathBuf> {
-    if env::var_os("CARGO_HOME").is_some() {
+pub fn apply_saved_homes() {
+    apply_saved_home(HomeKind::Cargo);
+    apply_saved_home(HomeKind::Rustup);
+}
+
+fn apply_saved_home(kind: HomeKind) -> Option<PathBuf> {
+    if env::var_os(kind.env_var()).is_some() {
         return None;
     }
-    let saved = saved_cargo_home()?;
-    env::set_var("CARGO_HOME", &saved);
-    prepend_path(&saved.join("bin"));
+    let saved = saved_home(kind)?;
+    env::set_var(kind.env_var(), &saved);
+    if matches!(kind, HomeKind::Cargo) {
+        prepend_path(&saved.join("bin"));
+    }
     Some(saved)
 }
 
-fn saved_cargo_home_path() -> Option<PathBuf> {
+fn saved_home_path(kind: HomeKind) -> Option<PathBuf> {
     dirs::data_local_dir()
         .or_else(dirs::config_dir)
-        .map(|directory| directory.join("CargoSweep").join("cargo-home.txt"))
+        .map(|directory| directory.join("CargoSweep").join(kind.config_name()))
 }
 
-fn saved_cargo_home() -> Option<PathBuf> {
-    let path = saved_cargo_home_path()?;
+fn saved_home(kind: HomeKind) -> Option<PathBuf> {
+    let path = saved_home_path(kind)?;
     let value = fs::read_to_string(&path).ok()?;
     let value = value.trim();
     if value.is_empty() {
@@ -208,8 +318,8 @@ fn saved_cargo_home() -> Option<PathBuf> {
     candidate.is_dir().then_some(candidate)
 }
 
-fn save_cargo_home(path: &Path) -> Result<(), String> {
-    let Some(config_path) = saved_cargo_home_path() else {
+fn save_home(kind: HomeKind, path: &Path) -> Result<(), String> {
+    let Some(config_path) = saved_home_path(kind) else {
         return Err("无法定位应用配置目录。".into());
     };
     if let Some(parent) = config_path.parent() {
@@ -217,21 +327,6 @@ fn save_cargo_home(path: &Path) -> Result<(), String> {
     }
     fs::write(&config_path, display(path))
         .map_err(|error| format!("无法写入应用配置 {}：{error}", config_path.display()))
-}
-
-fn default_cargo_home() -> Result<PathBuf, String> {
-    dirs::home_dir()
-        .map(|home| home.join(".cargo"))
-        .ok_or_else(|| "无法定位用户目录。".to_string())
-}
-
-fn rustup_home() -> Result<PathBuf, String> {
-    if let Some(path) = env::var_os("RUSTUP_HOME") {
-        return Ok(PathBuf::from(path));
-    }
-    dirs::home_dir()
-        .map(|home| home.join(".rustup"))
-        .ok_or_else(|| "无法定位用户目录。".to_string())
 }
 
 fn link_state(default: &Path) -> (bool, Option<PathBuf>) {
@@ -328,44 +423,45 @@ fn copy_symlink(source: &Path, target: &Path) -> Result<(), String> {
     }
 }
 
-fn set_cargo_home_environment(target: &Path) -> Result<String, String> {
+fn set_home_environment(kind: HomeKind, target: &Path) -> Result<String, String> {
     #[cfg(windows)]
     {
         let mut command = Command::new("setx");
-        command.arg("CARGO_HOME").arg(target);
+        command.arg(kind.env_var()).arg(target);
         apply_no_window(&mut command);
         let output = command
             .output()
-            .map_err(|error| format!("无法设置 CARGO_HOME：{error}"))?;
+            .map_err(|error| format!("无法设置 {}：{error}", kind.label()))?;
         if !output.status.success() {
             return Err(format!(
-                "设置用户环境变量 CARGO_HOME 失败：{}",
+                "设置用户环境变量 {} 失败：{}",
+                kind.label(),
                 String::from_utf8_lossy(&output.stderr).trim()
             ));
         }
-        Ok("已写入用户环境变量 CARGO_HOME".into())
+        Ok(format!("已写入用户环境变量 {}", kind.label()))
     }
     #[cfg(unix)]
     {
         let profile = shell_profile().ok_or_else(|| "无法定位 shell 配置文件。".to_string())?;
-        write_profile(&profile, target)?;
+        write_profile(kind, &profile, target)?;
         Ok(format!("已写入 {}", display(&profile)))
     }
 }
 
 #[cfg(unix)]
-fn write_profile(profile: &Path, target: &Path) -> Result<(), String> {
-    let begin = "# >>> Cargo Sweep CARGO_HOME >>>";
-    let end = "# <<< Cargo Sweep CARGO_HOME <<<";
+fn write_profile(kind: HomeKind, profile: &Path, target: &Path) -> Result<(), String> {
+    let begin = format!("# >>> Cargo Sweep {} >>>", kind.label());
+    let end = format!("# <<< Cargo Sweep {} <<<", kind.label());
     let mut content = fs::read_to_string(profile).unwrap_or_default();
-    if let Some(start) = content.find(begin) {
-        if let Some(relative_end) = content[start..].find(end) {
+    if let Some(start) = content.find(&begin) {
+        if let Some(relative_end) = content[start..].find(&end) {
             let finish = start + relative_end + end.len();
             content.replace_range(start..finish, "");
         }
     }
     let escaped = display(target).replace('\'', "'\\''");
-    let block = format!("{begin}\nexport CARGO_HOME='{escaped}'\n{end}\n");
+    let block = format!("{begin}\nexport {}='{escaped}'\n{end}\n", kind.env_var());
     if !content.trim().is_empty() {
         content = content.trim_end().to_string();
         content.push_str("\n\n");
@@ -573,6 +669,7 @@ mod tests {
         let status = status().expect("cargo home status");
         assert!(!status.current.is_empty());
         assert!(!status.cargo_bin.is_empty());
+        assert!(!status.rustup.current.is_empty());
     }
 
     #[test]

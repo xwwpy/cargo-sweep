@@ -19,7 +19,9 @@ import {
   installRustup,
   installRustToolchain,
   migrateCargoHome,
+  migrateRustupHome,
   pickCargoHomeFolder,
+  pickRustupHomeFolder,
   setDefaultRustToolchain,
   setRustupPath,
   updateRustToolchain,
@@ -70,6 +72,11 @@ const cargoHomeTarget = ref("");
 const createCargoLink = ref(true);
 const cargoMigrating = ref(false);
 const migrationError = ref<string | null>(null);
+const rustupHomeDialog = ref(false);
+const rustupHomeTarget = ref("");
+const createRustupLink = ref(true);
+const rustupMigrating = ref(false);
+const rustupMigrationError = ref<string | null>(null);
 let timer: number | undefined;
 
 const rustupReady = computed(() => status.value?.rustupInstalled ?? false);
@@ -124,16 +131,31 @@ const environmentRows = computed(() => {
     },
     {
       name: "RUSTUP_HOME",
-      value: cargoHome.value.rustupHome,
-      note: "保持不变",
+      value: cargoHome.value.rustup.current,
+      note:
+        cargoHome.value.rustup.source === "environment"
+          ? "用户环境变量"
+          : cargoHome.value.rustup.source === "app"
+            ? "应用配置"
+            : "默认路径",
     },
   ];
 });
 const linkLabel = computed(() => {
   if (!cargoHome.value?.linkExists) {
-    return "未创建链接";
+    return "CARGO_HOME 未链接";
   }
-  return cargoHome.value.linkMatches ? "链接已创建" : "链接指向其他位置";
+  return cargoHome.value.linkMatches
+    ? "CARGO_HOME 已链接"
+    : "CARGO_HOME 链接异常";
+});
+const rustupLinkLabel = computed(() => {
+  if (!cargoHome.value?.rustup.linkExists) {
+    return "RUSTUP_HOME 未链接";
+  }
+  return cargoHome.value.rustup.linkMatches
+    ? "RUSTUP_HOME 已链接"
+    : "RUSTUP_HOME 链接异常";
 });
 const elapsedLabel = computed(() => {
   const minutes = Math.floor(elapsed.value / 60);
@@ -377,6 +399,60 @@ async function runCargoHomeMigration() {
   }
 }
 
+function openRustupHomeDialog() {
+  if (!cargoHome.value || cargoHome.value.rustup.linkExists || busy.value) {
+    return;
+  }
+  rustupHomeTarget.value = "";
+  createRustupLink.value = true;
+  rustupMigrationError.value = null;
+  rustupHomeDialog.value = true;
+}
+
+async function pickRustupHomeTarget() {
+  const selected = await pickRustupHomeFolder();
+  if (selected) {
+    rustupHomeTarget.value = selected;
+  }
+}
+
+async function runRustupHomeMigration() {
+  if (!rustupHomeTarget.value.trim()) {
+    ElMessage.warning("请选择新的 RUSTUP_HOME 目录");
+    return;
+  }
+  if (busy.value) {
+    return;
+  }
+  busy.value = "migrate-rustup-home";
+  rustupMigrating.value = true;
+  rustupMigrationError.value = null;
+  actionOutput.value = null;
+  actionSuccess.value = null;
+  startTimer();
+  try {
+    const result = await migrateRustupHome(
+      rustupHomeTarget.value.trim(),
+      createRustupLink.value,
+    );
+    cargoHome.value = result.status;
+    actionOutput.value = result.output;
+    actionSuccess.value = true;
+    rustupHomeDialog.value = false;
+    ElMessage.success("RUSTUP_HOME 已迁移");
+    await load();
+  } catch (reason) {
+    rustupMigrationError.value = errorMessage(reason);
+    actionOutput.value = rustupMigrationError.value;
+    actionSuccess.value = false;
+    ElMessage.error("迁移失败，请查看日志");
+  } finally {
+    stopTimer();
+    busy.value = null;
+    rustupMigrating.value = false;
+  }
+}
+
 async function installChannel(view: ChannelView) {
   const setDefault = !status.value?.installed || !status.value?.defaultToolchain;
   await runOperation(
@@ -566,18 +642,29 @@ onUnmounted(stopTimer);
         <div class="env-head">
           <div>
             <span class="section-kicker">ENVIRONMENT</span>
-            <h2>环境变量与 Cargo 存储</h2>
+            <h2>环境变量与 Rust 存储</h2>
             <p class="env-sub">安装工具链 / rustup 时使用；PATH 只会在缺失时追加。</p>
           </div>
-          <span
-            class="link-badge"
-            :class="{
-              ok: cargoHome.linkExists && cargoHome.linkMatches,
-              warn: cargoHome.linkExists && !cargoHome.linkMatches,
-            }"
-          >
-            {{ linkLabel }}
-          </span>
+          <div class="link-badges">
+            <span
+              class="link-badge"
+              :class="{
+                ok: cargoHome.linkExists && cargoHome.linkMatches,
+                warn: cargoHome.linkExists && !cargoHome.linkMatches,
+              }"
+            >
+              {{ linkLabel }}
+            </span>
+            <span
+              class="link-badge"
+              :class="{
+                ok: cargoHome.rustup.linkExists && cargoHome.rustup.linkMatches,
+                warn: cargoHome.rustup.linkExists && !cargoHome.rustup.linkMatches,
+              }"
+            >
+              {{ rustupLinkLabel }}
+            </span>
+          </div>
         </div>
 
         <div class="env-grid">
@@ -591,23 +678,39 @@ onUnmounted(stopTimer);
         </div>
 
         <div v-if="cargoHome.linkExists" class="link-detail">
-          <span>旧路径链接</span>
+          <span>CARGO_HOME 链接</span>
           <code>{{ cargoHome.default }}</code>
           <span>→</span>
           <code>{{ cargoHome.linkTarget || "未知目标" }}</code>
         </div>
 
+        <div v-if="cargoHome.rustup.linkExists" class="link-detail">
+          <span>RUSTUP_HOME 链接</span>
+          <code>{{ cargoHome.rustup.default }}</code>
+          <span>→</span>
+          <code>{{ cargoHome.rustup.linkTarget || "未知目标" }}</code>
+        </div>
+
         <div class="cargo-home-footer">
           <p>
-            更改位置会迁移 registry、git 缓存和 Cargo 配置，建议先关闭正在运行的 cargo 构建。
+            更改位置会迁移对应数据；建议先关闭正在运行的 cargo、rustup 和 rustc 进程。
           </p>
-          <el-button
-            :disabled="cargoHome.linkExists || Boolean(busy)"
-            :title="cargoHome.linkExists ? '已检测到旧路径链接，无需再次迁移' : ''"
-            @click="openCargoHomeDialog"
-          >
-            更改 CARGO_HOME
-          </el-button>
+          <div class="storage-actions">
+            <el-button
+              :disabled="cargoHome.linkExists || Boolean(busy)"
+              :title="cargoHome.linkExists ? '已检测到旧路径链接，无需再次迁移' : ''"
+              @click="openCargoHomeDialog"
+            >
+              更改 CARGO_HOME
+            </el-button>
+            <el-button
+              :disabled="cargoHome.rustup.linkExists || Boolean(busy)"
+              :title="cargoHome.rustup.linkExists ? '已检测到旧路径链接，无需再次迁移' : ''"
+              @click="openRustupHomeDialog"
+            >
+              更改 RUSTUP_HOME
+            </el-button>
+          </div>
         </div>
       </section>
 
@@ -852,6 +955,70 @@ onUnmounted(stopTimer);
           :loading="cargoMigrating"
           :disabled="!cargoHomeTarget || Boolean(busy)"
           @click="runCargoHomeMigration"
+        >
+          开始迁移
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="rustupHomeDialog"
+      title="更改 RUSTUP_HOME"
+      width="580px"
+      :close-on-click-modal="!rustupMigrating"
+      :close-on-press-escape="!rustupMigrating"
+      :show-close="!rustupMigrating"
+    >
+      <div class="migration-dialog">
+        <p class="migration-intro">
+          将 Rustup 工具链和下载缓存迁移到新目录，并为用户设置
+          <code>RUSTUP_HOME</code>。迁移期间请不要运行 cargo / rustup / rustc。
+        </p>
+        <div class="migration-current">
+          <span>当前位置</span>
+          <code>{{ cargoHome?.rustup.current }}</code>
+        </div>
+        <div class="migration-target">
+          <el-input
+            v-model="rustupHomeTarget"
+            placeholder="选择新的空目录（建议非系统盘）"
+            :disabled="rustupMigrating"
+          />
+          <el-button :disabled="rustupMigrating" @click="pickRustupHomeTarget">
+            选择目录
+          </el-button>
+        </div>
+
+        <div class="migration-env">
+          <span class="migration-env-title">迁移后环境变量</span>
+          <div><code>RUSTUP_HOME</code><span>{{ rustupHomeTarget || "新目录" }}</span></div>
+          <div>
+            <code>CARGO_HOME</code>
+            <span>{{ cargoHome?.current }}（保持不变）</span>
+          </div>
+          <div><code>PATH</code><span>保持不变</span></div>
+        </div>
+
+        <el-checkbox v-model="createRustupLink" :disabled="rustupMigrating">
+          在旧路径 <code>~/.rustup</code> 创建链接（推荐）
+        </el-checkbox>
+        <p class="migration-hint">
+          创建链接后，依赖默认 <code>~/.rustup</code> 的其他应用仍可正常使用；
+          不创建时，这些应用需要重新登录或手动设置 RUSTUP_HOME。
+        </p>
+        <div v-if="rustupMigrationError" class="migration-error">
+          {{ rustupMigrationError }}
+        </div>
+      </div>
+      <template #footer>
+        <el-button :disabled="rustupMigrating" @click="rustupHomeDialog = false">
+          取消
+        </el-button>
+        <el-button
+          type="primary"
+          :loading="rustupMigrating"
+          :disabled="!rustupHomeTarget || Boolean(busy)"
+          @click="runRustupHomeMigration"
         >
           开始迁移
         </el-button>
@@ -1279,6 +1446,13 @@ onUnmounted(stopTimer);
   color: #98a2b3;
 }
 
+.link-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
 .link-badge {
   padding: 3px 6px;
   font-size: 8px;
@@ -1381,6 +1555,14 @@ onUnmounted(stopTimer);
   font-size: 8.5px;
   line-height: 1.6;
   color: #98a2b3;
+}
+
+.storage-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
 }
 
 .cargo-home-footer :deep(.el-button) {
