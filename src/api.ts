@@ -5,18 +5,24 @@ import type {
   ApplyCargoSourceResult,
   CargoSourceStatus,
   DeleteResult,
+  LatestRustVersions,
+  RustInstallationProbe,
+  RustToolchainOperationResult,
   RustToolchainStatus,
-  RustToolchainUpdateResult,
   ScanProgress,
   ScanResult,
 } from "./types";
 import {
   demoApplyCargoSource,
   demoCargoSourceStatus,
+  demoCheckRustLatest,
   demoDelete,
+  demoInstallRustToolchain,
+  demoProbeRustInstallation,
   demoRoots,
   demoRustToolchainStatus,
   demoScan,
+  demoSetDefaultRustToolchain,
   demoUpdateRustToolchain,
 } from "./lib/demo";
 
@@ -78,6 +84,16 @@ export async function applyCargoSource(url: string): Promise<ApplyCargoSourceRes
   return invoke<ApplyCargoSourceResult>("apply_cargo_source", { url });
 }
 
+export async function probeRustInstallation(): Promise<RustInstallationProbe> {
+  if (isDemoMode()) {
+    return demoProbeRustInstallation();
+  }
+  if (!isTauriRuntime()) {
+    return { installed: false, rustupInstalled: false, version: null };
+  }
+  return invoke<RustInstallationProbe>("probe_rust_installation");
+}
+
 export async function detectRustToolchain(): Promise<RustToolchainStatus> {
   if (isDemoMode()) {
     return demoRustToolchainStatus();
@@ -88,14 +104,58 @@ export async function detectRustToolchain(): Promise<RustToolchainStatus> {
   return invoke<RustToolchainStatus>("detect_rust_toolchain");
 }
 
-export async function updateRustToolchain(): Promise<RustToolchainUpdateResult> {
+export async function checkRustToolchainLatest(): Promise<LatestRustVersions> {
   if (isDemoMode()) {
-    return demoUpdateRustToolchain();
+    return demoCheckRustLatest();
   }
   if (!isTauriRuntime()) {
     throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
   }
-  return invoke<RustToolchainUpdateResult>("update_rust_toolchain");
+  return invoke<LatestRustVersions>("check_rust_toolchain_latest");
+}
+
+export async function installRustToolchain(
+  target: string,
+  setDefault = false,
+): Promise<RustToolchainOperationResult> {
+  if (isDemoMode()) {
+    return demoInstallRustToolchain(target, setDefault);
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<RustToolchainOperationResult>("install_rust_toolchain", {
+    target,
+    setDefault,
+  });
+}
+
+export async function setDefaultRustToolchain(
+  target: string,
+): Promise<RustToolchainOperationResult> {
+  if (isDemoMode()) {
+    return demoSetDefaultRustToolchain(target);
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<RustToolchainOperationResult>("set_default_rust_toolchain", {
+    target,
+  });
+}
+
+export async function updateRustToolchain(
+  target: string | null = null,
+): Promise<RustToolchainOperationResult> {
+  if (isDemoMode()) {
+    return demoUpdateRustToolchain(target);
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<RustToolchainOperationResult>("update_rust_toolchain", {
+    target,
+  });
 }
 
 export async function openFolder(path: string): Promise<void> {

@@ -2,8 +2,10 @@ import type {
   ApplyCargoSourceResult,
   CargoSourceStatus,
   DeleteResult,
+  LatestRustVersions,
+  RustInstallationProbe,
+  RustToolchainOperationResult,
   RustToolchainStatus,
-  RustToolchainUpdateResult,
   ScanResult,
   TargetInfo,
 } from "../types";
@@ -105,48 +107,182 @@ export async function demoApplyCargoSource(url: string): Promise<ApplyCargoSourc
   };
 }
 
-const demoToolchains = [
-  { name: "stable-x86_64-pc-windows-msvc", active: true },
-  { name: "nightly-x86_64-pc-windows-msvc", active: false },
-  { name: "1.98.0-x86_64-pc-windows-msvc", active: false },
-];
+const DEMO_HOST = "x86_64-pc-windows-msvc";
+const demoNoRust = new URLSearchParams(window.location.search).has("norust");
+let demoInstalled = !demoNoRust;
+let demoStable = "1.99.1";
+let demoNightly = "1.101.0";
+let demoDefault = "stable";
+const demoPinned = new Map<string, string>([["1.98.0", "1.98.0"]]);
 
-function demoToolchainStatus(version: string): RustToolchainStatus {
+function demoToolchains() {
+  if (!demoInstalled) {
+    return [];
+  }
+  return [
+    {
+      name: `stable-${DEMO_HOST}`,
+      channel: "stable",
+      release: demoStable,
+      rustcVersion: `rustc ${demoStable} (demo build)`,
+      active: demoDefault === "stable",
+      default: demoDefault === "stable",
+    },
+    {
+      name: `nightly-${DEMO_HOST}`,
+      channel: "nightly",
+      release: demoNightly,
+      rustcVersion: `rustc ${demoNightly}-nightly (demo build)`,
+      active: demoDefault === "nightly",
+      default: demoDefault === "nightly",
+    },
+    ...[...demoPinned.entries()].map(([version]) => ({
+      name: `${version}-${DEMO_HOST}`,
+      channel: "pinned",
+      release: version,
+      rustcVersion: `rustc ${version} (demo build)`,
+      active: demoDefault === version,
+      default: demoDefault === version,
+    })),
+  ];
+}
+
+function demoToolchainStatus(): RustToolchainStatus {
+  const toolchains = demoToolchains();
+  const channels = ["stable", "nightly"].map((channel) => {
+    const installed = toolchains.find((toolchain) => toolchain.channel === channel);
+    return {
+      channel,
+      installed: Boolean(installed),
+      toolchain: installed?.name ?? null,
+      release: installed?.release ?? null,
+      rustcVersion: installed?.rustcVersion ?? null,
+      active: installed?.active ?? false,
+      default: installed?.default ?? false,
+    };
+  });
+  const active = toolchains.find((toolchain) => toolchain.active);
   return {
-    version,
-    rustcVersion: `rustc ${version} (demo build)`,
-    release: version,
-    host: "x86_64-pc-windows-msvc",
-    channel: "stable",
-    activeToolchain: "stable-x86_64-pc-windows-msvc",
-    toolchains: demoToolchains.map((toolchain) => ({ ...toolchain })),
+    installed: demoInstalled,
+    rustupInstalled: true,
+    version: active?.release ?? null,
+    rustcVersion: active?.rustcVersion ?? null,
+    host: DEMO_HOST,
+    activeToolchain: active?.name ?? null,
+    defaultToolchain: demoDefault ? `${demoDefault}-${DEMO_HOST}` : null,
+    toolchains,
+    channels,
     cargoVersion: "1.99.1",
     rustupVersion: "1.29.2",
   };
 }
 
-export async function demoRustToolchainStatus(): Promise<RustToolchainStatus> {
-  await new Promise((resolve) => window.setTimeout(resolve, 420));
-  return demoToolchainStatus("1.99.1");
+export async function demoProbeRustInstallation(): Promise<RustInstallationProbe> {
+  return {
+    installed: demoInstalled,
+    rustupInstalled: true,
+    version: demoInstalled ? `rustc ${demoStable} (demo build)` : null,
+  };
 }
 
-export async function demoUpdateRustToolchain(): Promise<RustToolchainUpdateResult> {
-  await new Promise((resolve) => window.setTimeout(resolve, 1800));
+export async function demoRustToolchainStatus(): Promise<RustToolchainStatus> {
+  await new Promise((resolve) => window.setTimeout(resolve, 420));
+  return demoToolchainStatus();
+}
+
+export async function demoCheckRustLatest(): Promise<LatestRustVersions> {
+  await new Promise((resolve) => window.setTimeout(resolve, 520));
+  return {
+    stable: {
+      channel: "stable",
+      version: "1.101.0 (demo build)",
+      release: "1.101.0",
+      date: "2026-10-27",
+    },
+    nightly: {
+      channel: "nightly",
+      version: "1.103.0-nightly (demo build)",
+      release: "1.103.0-nightly",
+      date: "2026-10-27",
+    },
+    historicalVersions: ["1.100.0", "1.99.0", "1.98.0", "1.97.0", "1.96.0", "1.95.0"],
+    error: null,
+  };
+}
+
+function demoToolchainName(target: string): string {
+  if (target === "stable" || target === "nightly") {
+    return `${target}-${DEMO_HOST}`;
+  }
+  return `${target}-${DEMO_HOST}`;
+}
+
+function demoOperation(output: string): RustToolchainOperationResult {
   return {
     success: true,
-    output: [
-      "info: syncing channel updates for 'stable-x86_64-pc-windows-msvc'",
-      "info: latest update on 2026-10-27, rust version 1.101.0",
-      "info: downloading component 'rustc'",
-      "info: downloading component 'cargo'",
-      "info: installing component 'rustc'",
-      "info: installing component 'cargo'",
-      "info: default toolchain set to 'stable-x86_64-pc-windows-msvc'",
-      "",
-      "  stable-x86_64-pc-windows-msvc updated - rustc 1.101.0",
-    ].join("\n"),
-    status: demoToolchainStatus("1.101.0"),
+    output,
+    status: demoToolchainStatus(),
   };
+}
+
+export async function demoInstallRustToolchain(
+  target: string,
+  setDefault: boolean,
+): Promise<RustToolchainOperationResult> {
+  await new Promise((resolve) => window.setTimeout(resolve, 1400));
+  if (target === "stable") {
+    demoStable = "1.101.0";
+    demoDefault = setDefault || !demoInstalled ? "stable" : demoDefault;
+    demoInstalled = true;
+  } else if (target === "nightly") {
+    demoNightly = "1.103.0";
+    demoDefault = setDefault || !demoInstalled ? "nightly" : demoDefault;
+    demoInstalled = true;
+  } else {
+    demoPinned.set(target, target);
+    demoDefault = setDefault || !demoInstalled ? target : demoDefault;
+    demoInstalled = true;
+  }
+  const name = demoToolchainName(target);
+  return demoOperation(
+    [
+      `info: syncing component updates for '${name}'`,
+      `info: installing component 'rustc'`,
+      `info: installing component 'cargo'`,
+      `info: default toolchain set to '${demoDefault}-${DEMO_HOST}'`,
+    ].join("\n"),
+  );
+}
+
+export async function demoSetDefaultRustToolchain(
+  target: string,
+): Promise<RustToolchainOperationResult> {
+  await new Promise((resolve) => window.setTimeout(resolve, 700));
+  const channel = target.split("-")[0];
+  demoDefault = channel;
+  return demoOperation(
+    `info: default toolchain set to '${demoToolchainName(channel)}'`,
+  );
+}
+
+export async function demoUpdateRustToolchain(
+  target: string | null,
+): Promise<RustToolchainOperationResult> {
+  await new Promise((resolve) => window.setTimeout(resolve, 1600));
+  const channel = (target ?? demoDefault).split("-")[0];
+  if (channel === "nightly") {
+    demoNightly = "1.103.0";
+  } else {
+    demoStable = "1.101.0";
+  }
+  return demoOperation(
+    [
+      `info: syncing channel updates for '${channel}-${DEMO_HOST}'`,
+      `info: downloading component 'rustc'`,
+      `info: installing component 'rustc'`,
+      `  ${channel}-${DEMO_HOST} updated`,
+    ].join("\n"),
+  );
 }
 
 export async function demoDelete(paths: string[]): Promise<DeleteResult> {

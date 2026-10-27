@@ -64,23 +64,59 @@ export interface ApplyCargoSourceResult {
 
 export interface InstalledRustToolchain {
   name: string;
+  channel: string;
+  release: string | null;
+  rustcVersion: string | null;
   active: boolean;
+  default: boolean;
+}
+
+export interface RustChannel {
+  channel: string;
+  installed: boolean;
+  toolchain: string | null;
+  release: string | null;
+  rustcVersion: string | null;
+  active: boolean;
+  default: boolean;
 }
 
 export interface RustToolchainStatus {
-  version: string;
-  rustcVersion: string;
-  release: string;
+  installed: boolean;
+  rustupInstalled: boolean;
+  version: string | null;
+  rustcVersion: string | null;
   host: string | null;
-  channel: string | null;
   activeToolchain: string | null;
+  defaultToolchain: string | null;
   toolchains: InstalledRustToolchain[];
+  channels: RustChannel[];
   cargoVersion: string | null;
   rustupVersion: string | null;
 }
 
-export interface RustToolchainUpdateResult {
+export interface LatestRustToolchain {
+  channel: string;
+  version: string;
+  release: string;
+  date: string | null;
+}
+
+export interface LatestRustVersions {
+  stable: LatestRustToolchain | null;
+  nightly: LatestRustToolchain | null;
+  historicalVersions: string[];
+  error: string | null;
+}
+
+export interface RustToolchainOperationResult {
   success: boolean;
   output: string;
   status: RustToolchainStatus;
+}
+
+export interface RustInstallationProbe {
+  installed: boolean;
+  rustupInstalled: boolean;
+  version: string | null;
 }

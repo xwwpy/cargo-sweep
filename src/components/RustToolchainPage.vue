@@ -3,65 +3,168 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import {
   CircleCheck,
+  Clock,
   Cpu,
   Download,
   InfoFilled,
   Refresh,
+  Switch,
   WarningFilled,
 } from "@element-plus/icons-vue";
-import { detectRustToolchain, errorMessage, updateRustToolchain } from "../api";
-import type { RustToolchainStatus } from "../types";
+import {
+  checkRustToolchainLatest,
+  detectRustToolchain,
+  errorMessage,
+  installRustToolchain,
+  setDefaultRustToolchain,
+  updateRustToolchain,
+} from "../api";
+import type {
+  LatestRustToolchain,
+  LatestRustVersions,
+  RustChannel,
+  RustToolchainStatus,
+} from "../types";
+
+interface ChannelView {
+  key: "stable" | "nightly";
+  label: string;
+  installed: boolean;
+  toolchain: string | null;
+  currentRelease: string | null;
+  currentFull: string | null;
+  latest: LatestRustToolchain | null;
+  latestRelease: string | null;
+  updateAvailable: boolean | null;
+  active: boolean;
+  default: boolean;
+}
+
+const emit = defineEmits<{
+  "rust-state": [installed: boolean];
+}>();
 
 const status = ref<RustToolchainStatus | null>(null);
+const latest = ref<LatestRustVersions | null>(null);
+const latestError = ref<string | null>(null);
 const loading = ref(true);
-const updating = ref(false);
+const latestLoading = ref(true);
 const error = ref<string | null>(null);
-const output = ref<string | null>(null);
-const updateSuccess = ref<boolean | null>(null);
+const busy = ref<string | null>(null);
+const actionOutput = ref<string | null>(null);
+const actionSuccess = ref<boolean | null>(null);
 const elapsed = ref(0);
+const historyTarget = ref("");
+const customTarget = ref("");
 let timer: number | undefined;
 
-const channelLabel = computed(() => {
-  const channel = status.value?.channel;
-  if (!channel) {
-    return "未知通道";
+const rustupReady = computed(() => status.value?.rustupInstalled ?? false);
+const channelViews = computed<ChannelView[]>(() => {
+  const result: ChannelView[] = [];
+  for (const key of ["stable", "nightly"] as const) {
+    const info = status.value?.channels.find((channel) => channel.channel === key);
+    const latestInfo =
+      key === "stable" ? latest.value?.stable ?? null : latest.value?.nightly ?? null;
+    result.push(channelView(key, info, latestInfo));
   }
-  if (channel === "pinned") {
-    return "固定版本";
-  }
-  if (channel === "custom") {
-    return "自定义";
-  }
-  return channel;
+  return result;
 });
-
-const updateCommand = computed(() => {
-  const toolchain = status.value?.activeToolchain;
-  return toolchain
-    ? `rustup update --no-self-update ${toolchain}`
-    : "rustup update --no-self-update";
-});
-
-const canUpdate = computed(
-  () => status.value !== null && status.value.rustupVersion !== null && !updating.value,
+const currentChannel = computed(
+  () =>
+    channelViews.value.find((channel) => channel.default) ??
+    channelViews.value.find((channel) => channel.active) ??
+    null,
 );
-
+const activeLatest = computed(() => currentChannel.value?.latest ?? null);
+const currentVersion = computed(() => status.value?.version ?? null);
+const latestVersion = computed(() => activeLatest.value?.release ?? null);
+const currentIsLatest = computed(() => {
+  const current = currentChannel.value;
+  if (!current?.installed || !current.latest) {
+    return null;
+  }
+  return sameVersion(current.currentFull, `rustc ${current.latest.version}`);
+});
+const historyOptions = computed(() => latest.value?.historicalVersions ?? []);
+const installedToolchains = computed(() => status.value?.toolchains ?? []);
+const busyLabel = computed(() => busy.value ?? "");
 const elapsedLabel = computed(() => {
   const minutes = Math.floor(elapsed.value / 60);
   const seconds = elapsed.value % 60;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 });
 
-async function load() {
-  loading.value = true;
-  error.value = null;
-  try {
-    status.value = await detectRustToolchain();
-  } catch (reason) {
-    error.value = errorMessage(reason);
-  } finally {
-    loading.value = false;
+function channelView(
+  key: "stable" | "nightly",
+  info: RustChannel | undefined,
+  latestInfo: LatestRustToolchain | null,
+): ChannelView {
+  const currentFull = info?.rustcVersion ?? null;
+  return {
+    key,
+    label: key === "stable" ? "Stable" : "Nightly",
+    installed: Boolean(info?.installed),
+    toolchain: info?.toolchain ?? null,
+    currentRelease: info?.release ?? null,
+    currentFull,
+    latest: latestInfo,
+    latestRelease: latestInfo?.release ?? null,
+    updateAvailable:
+      info?.installed && latestInfo && currentFull
+        ? !sameVersion(currentFull, `rustc ${latestInfo.version}`)
+        : null,
+    active: Boolean(info?.active),
+    default: Boolean(info?.default),
+  };
+}
+
+function sameVersion(left: string | null, right: string | null): boolean {
+  if (!left || !right) {
+    return false;
   }
+  return left.replace(/^rustc\s+/, "").trim() === right.replace(/^rustc\s+/, "").trim();
+}
+
+function channelState(view: ChannelView): string {
+  if (!view.installed) {
+    return view.latest ? `最新 ${view.latestRelease}` : "未安装";
+  }
+  if (latestLoading.value) {
+    return "检查最新版本…";
+  }
+  if (!view.latest) {
+    return "最新版本未知";
+  }
+  if (view.updateAvailable === false) {
+    return "已是最新";
+  }
+  return `可更新到 ${view.latestRelease}`;
+}
+
+function actionLabel(view: ChannelView): string {
+  if (!view.installed) {
+    return "安装";
+  }
+  if (latestLoading.value) {
+    return "检测中";
+  }
+  if (!view.latest) {
+    return "更新";
+  }
+  return view.updateAvailable ? "更新" : "已是最新";
+}
+
+function canUseAction(view: ChannelView): boolean {
+  if (!rustupReady.value || busy.value) {
+    return false;
+  }
+  if (!view.installed) {
+    return true;
+  }
+  if (latestLoading.value) {
+    return false;
+  }
+  return view.updateAvailable === true;
 }
 
 function startTimer() {
@@ -77,34 +180,132 @@ function stopTimer() {
   timer = undefined;
 }
 
-async function update() {
-  if (updating.value || !status.value) {
+async function loadLatest() {
+  latestLoading.value = true;
+  latestError.value = null;
+  try {
+    latest.value = await checkRustToolchainLatest();
+    latestError.value = latest.value.error;
+  } catch (reason) {
+    latestError.value = errorMessage(reason);
+  } finally {
+    latestLoading.value = false;
+  }
+}
+
+async function load() {
+  loading.value = true;
+  error.value = null;
+  try {
+    status.value = await detectRustToolchain();
+    emit("rust-state", status.value.installed);
+    void loadLatest();
+  } catch (reason) {
+    error.value = errorMessage(reason);
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function runOperation(
+  label: string,
+  operation: () => Promise<{ success: boolean; output: string; status: RustToolchainStatus }>,
+  successMessage: string,
+) {
+  if (busy.value) {
     return;
   }
-
-  updating.value = true;
-  output.value = null;
-  updateSuccess.value = null;
+  busy.value = label;
+  actionOutput.value = null;
+  actionSuccess.value = null;
   startTimer();
-
   try {
-    const result = await updateRustToolchain();
+    const result = await operation();
     status.value = result.status;
-    output.value = result.output;
-    updateSuccess.value = result.success;
+    actionOutput.value = result.output;
+    actionSuccess.value = result.success;
+    emit("rust-state", result.status.installed);
     if (result.success) {
-      ElMessage.success(`Rust 工具链已更新到 ${result.status.version}`);
+      ElMessage.success(successMessage);
     } else {
-      ElMessage.error("更新未完成，请查看下方日志");
+      ElMessage.error("操作未完成，请查看日志");
     }
   } catch (reason) {
-    updateSuccess.value = false;
-    output.value = errorMessage(reason);
-    ElMessage.error("更新失败，请查看下方日志");
+    actionSuccess.value = false;
+    actionOutput.value = errorMessage(reason);
+    ElMessage.error("操作失败，请查看日志");
   } finally {
     stopTimer();
-    updating.value = false;
+    busy.value = null;
   }
+}
+
+async function installChannel(view: ChannelView) {
+  const setDefault = !status.value?.installed || !status.value?.defaultToolchain;
+  await runOperation(
+    `install-${view.key}`,
+    () => installRustToolchain(view.key, setDefault),
+    `${view.label} 工具链已安装`,
+  );
+}
+
+async function updateChannel(view: ChannelView) {
+  await runOperation(
+    `update-${view.key}`,
+    () => updateRustToolchain(view.toolchain ?? view.key),
+    `${view.label} 工具链已更新`,
+  );
+}
+
+async function switchChannel(view: ChannelView) {
+  if (!view.installed || !view.toolchain) {
+    return;
+  }
+  await runOperation(
+    `switch-${view.key}`,
+    () => setDefaultRustToolchain(view.toolchain as string),
+    `默认工具链已切换为 ${view.label}`,
+  );
+}
+
+async function switchToolchain(name: string) {
+  if (busy.value) {
+    return;
+  }
+  await runOperation(
+    `switch-${name}`,
+    () => setDefaultRustToolchain(name),
+    "默认工具链已切换",
+  );
+}
+
+async function installHistory() {
+  if (!historyTarget.value) {
+    ElMessage.warning("请选择要安装的历史版本");
+    return;
+  }
+  await runOperation(
+    `install-${historyTarget.value}`,
+    () => installRustToolchain(historyTarget.value, false),
+    `${historyTarget.value} 工具链已安装`,
+  );
+}
+
+async function installCustom() {
+  const target = customTarget.value.trim();
+  if (!/^(stable|beta|nightly|\d+\.\d+(\.\d+)?)$/.test(target)) {
+    ElMessage.warning("请输入 stable、beta、nightly 或类似 1.85.0 的版本号");
+    return;
+  }
+  await runOperation(
+    `install-${target}`,
+    () => installRustToolchain(target, false),
+    `${target} 工具链已安装`,
+  );
+}
+
+function retryLatest() {
+  void loadLatest();
 }
 
 onMounted(() => {
@@ -119,11 +320,11 @@ onUnmounted(stopTimer);
     <header class="toolchain-hero">
       <div>
         <span class="eyebrow"><i /> RUST TOOLCHAIN</span>
-        <h1>工具链，<span>保持在最新。</span></h1>
-        <p>查看当前 Rust 版本，一键更新活动工具链。</p>
+        <h1>工具链，<span>版本一目了然。</span></h1>
+        <p>查看当前版本与最新版本，按需安装、更新或切换。</p>
       </div>
-      <el-button class="refresh-button" :loading="loading" @click="load">
-        <el-icon v-if="!loading"><Refresh /></el-icon>
+      <el-button class="refresh-button" :loading="loading || latestLoading" @click="load">
+        <el-icon v-if="!loading && !latestLoading"><Refresh /></el-icon>
         重新检测
       </el-button>
     </header>
@@ -144,126 +345,234 @@ onUnmounted(stopTimer);
     </div>
 
     <template v-else-if="status">
-      <section class="version-panel">
-        <div class="version-mark"><el-icon><Cpu /></el-icon></div>
-        <div class="version-copy">
-          <span class="version-label">当前 Rust 版本</span>
-          <div class="version-line">
-            <h2>{{ status.version }}</h2>
-            <span class="channel-pill">{{ channelLabel }}</span>
-          </div>
-          <code :title="status.rustcVersion">{{ status.rustcVersion }}</code>
+      <div v-if="!status.installed" class="setup-banner">
+        <div class="setup-icon"><el-icon><InfoFilled /></el-icon></div>
+        <div class="setup-copy">
+          <h2>
+            {{
+              status.toolchains.length > 0
+                ? "已安装工具链，但还没有默认工具链"
+                : "还没有安装 Rust 工具链"
+            }}
+          </h2>
+          <p>
+            {{
+              status.toolchains.length > 0
+                ? "在下方选择 Stable 或 Nightly 并设为默认即可。"
+                : "安装 Stable 或 Nightly 后即可使用 Cargo 下载源管理。"
+            }}
+            <template v-if="!status.rustupInstalled">
+              未检测到 rustup，请先安装 <code>rustup</code>（https://rustup.rs）。
+            </template>
+          </p>
         </div>
-        <div class="version-meta">
-          <div>
-            <span>活动工具链</span>
-            <strong>{{ status.activeToolchain || "未检测到" }}</strong>
-          </div>
-          <div>
-            <span>目标平台</span>
-            <strong>{{ status.host || "未知" }}</strong>
-          </div>
+        <div class="setup-versions">
+          <span v-if="latest?.stable">Stable {{ latest.stable.release }}</span>
+          <span v-if="latest?.nightly">Nightly {{ latest.nightly.release }}</span>
+        </div>
+      </div>
+
+      <section v-if="status.installed" class="current-panel">
+        <div class="current-mark"><el-icon><Cpu /></el-icon></div>
+        <div class="current-copy">
+          <span class="panel-label">当前默认工具链</span>
+          <h2>{{ currentVersion || "未知版本" }}</h2>
+          <code>{{ status.activeToolchain || status.defaultToolchain || "未设置默认工具链" }}</code>
+        </div>
+        <div class="current-latest">
+          <span>最新版本</span>
+          <strong>
+            <template v-if="latestLoading">检测中…</template>
+            <template v-else>{{ latestVersion || "未获取" }}</template>
+          </strong>
+          <em v-if="currentIsLatest === true">已是最新</em>
+          <em v-else-if="currentIsLatest === false" class="update-hint">有新版本</em>
         </div>
       </section>
 
-      <section class="version-facts">
-        <article>
-          <span>Cargo</span>
-          <strong>{{ status.cargoVersion || "未检测到" }}</strong>
-        </article>
-        <article>
-          <span>rustup</span>
-          <strong>{{ status.rustupVersion || "未检测到" }}</strong>
-        </article>
-        <article>
-          <span>已安装工具链</span>
-          <strong>{{ status.toolchains.length }}</strong>
-        </article>
-      </section>
+      <div v-if="latestError" class="latest-warning">
+        <el-icon><WarningFilled /></el-icon>
+        <span>最新版本获取失败：{{ latestError }}</span>
+        <button type="button" @click="retryLatest">重试</button>
+      </div>
 
-      <section class="update-card" :class="{ failed: updateSuccess === false }">
-        <div class="update-heading">
-          <div class="update-icon"><el-icon><Download /></el-icon></div>
-          <div>
-            <h3>更新当前工具链</h3>
-            <p>通过 rustup 获取当前通道的最新版本，不改动其他工具链。</p>
+      <div class="channel-grid">
+        <article
+          v-for="channel in channelViews"
+          :key="channel.key"
+          class="channel-card"
+          :class="{ default: channel.default, installed: channel.installed }"
+        >
+          <div class="channel-head">
+            <div>
+              <span class="channel-name">{{ channel.label }}</span>
+              <span class="channel-sub">工具链</span>
+            </div>
+            <span v-if="channel.default" class="status-badge active">
+              <el-icon><CircleCheck /></el-icon>
+              当前默认
+            </span>
+            <span v-else-if="channel.installed" class="status-badge">已安装</span>
+            <span v-else class="status-badge muted">未安装</span>
           </div>
-          <span v-if="updating" class="updating-pill">
-            <el-icon class="spinning"><Refresh /></el-icon>
-            {{ elapsedLabel }}
-          </span>
-          <el-icon v-else-if="updateSuccess === true" class="success-icon">
-            <CircleCheck />
-          </el-icon>
-          <el-icon v-else-if="updateSuccess === false" class="failed-icon">
-            <WarningFilled />
-          </el-icon>
-        </div>
 
-        <div class="command-line">
-          <span>$</span>
-          <code>{{ updateCommand }}</code>
-        </div>
+          <div class="version-pair">
+            <div>
+              <span class="version-label">当前</span>
+              <strong>{{ channel.currentRelease || "—" }}</strong>
+            </div>
+            <span class="version-arrow">→</span>
+            <div>
+              <span class="version-label">最新</span>
+              <strong>
+                <template v-if="latestLoading">检测中…</template>
+                <template v-else>{{ channel.latestRelease || "未知" }}</template>
+              </strong>
+            </div>
+          </div>
 
-        <div v-if="updating" class="update-progress">
-          <el-progress
-            :percentage="100"
-            :show-text="false"
-            :indeterminate="true"
-            :duration="1.8"
-            :stroke-width="3"
-          />
-          <span>正在下载并安装，可能需要几分钟</span>
-        </div>
+          <p class="channel-state" :class="{ ok: channel.updateAvailable === false }">
+            {{ channelState(channel) }}
+          </p>
 
-        <div class="update-actions">
-          <span class="update-hint">
-            <el-icon><InfoFilled /></el-icon>
-            {{ status.rustupVersion ? "使用 rustup 更新" : "未检测到 rustup" }}
-          </span>
-          <el-button
-            type="primary"
-            class="update-button"
-            :disabled="!canUpdate"
-            :loading="updating"
-            @click="update"
+          <div class="channel-actions">
+            <el-button
+              v-if="!channel.installed"
+              type="primary"
+              :disabled="!rustupReady || Boolean(busy)"
+              :loading="busy === `install-${channel.key}`"
+              @click="installChannel(channel)"
+            >
+              <el-icon><Download /></el-icon>
+              安装
+            </el-button>
+            <el-button
+              v-else
+              :type="channel.updateAvailable ? 'primary' : 'default'"
+              :disabled="!canUseAction(channel)"
+              :loading="busy === `update-${channel.key}`"
+              @click="updateChannel(channel)"
+            >
+              <el-icon><Refresh /></el-icon>
+              {{ actionLabel(channel) }}
+            </el-button>
+            <el-button
+              v-if="channel.installed && !channel.default"
+              class="switch-button"
+              :disabled="Boolean(busy)"
+              :loading="busy === `switch-${channel.key}`"
+              @click="switchChannel(channel)"
+            >
+              <el-icon><Switch /></el-icon>
+              设为默认
+            </el-button>
+          </div>
+        </article>
+      </div>
+
+      <section class="history-card">
+        <div class="history-head">
+          <div>
+            <span class="section-kicker">HISTORY</span>
+            <h2>安装历史版本</h2>
+          </div>
+          <span v-if="!rustupReady" class="history-warning">需要先安装 rustup</span>
+        </div>
+        <div class="history-actions">
+          <el-select
+            v-model="historyTarget"
+            placeholder="选择版本"
+            :disabled="!rustupReady || Boolean(busy) || latestLoading"
+            class="history-select"
           >
-            <el-icon v-if="!updating"><Download /></el-icon>
-            {{ updating ? "更新中" : "一键更新" }}
+            <el-option
+              v-for="version in historyOptions"
+              :key="version"
+              :label="version"
+              :value="version"
+            />
+          </el-select>
+          <el-button
+            :disabled="!rustupReady || !historyTarget || Boolean(busy)"
+            :loading="busy === `install-${historyTarget}`"
+            @click="installHistory"
+          >
+            安装
+          </el-button>
+          <span class="history-divider" />
+          <el-input
+            v-model="customTarget"
+            class="custom-version"
+            placeholder="或输入 1.85.0"
+            :disabled="!rustupReady || Boolean(busy)"
+            @keyup.enter="installCustom"
+          />
+          <el-button
+            :disabled="!rustupReady || !customTarget || Boolean(busy)"
+            :loading="busy === `install-${customTarget.trim()}`"
+            @click="installCustom"
+          >
+            安装自定义版本
           </el-button>
         </div>
-
-        <pre
-          v-if="output"
-          class="update-log"
-          :class="{ failed: updateSuccess === false }"
-        >{{ output }}</pre>
       </section>
 
-      <section class="toolchain-section">
+      <section v-if="installedToolchains.length > 0" class="installed-section">
         <div class="section-heading">
           <div>
             <span class="section-kicker">INSTALLED</span>
             <h2>已安装工具链</h2>
           </div>
+          <span>{{ installedToolchains.length }} 个</span>
         </div>
-
-        <div v-if="status.toolchains.length > 0" class="toolchain-list">
+        <div class="toolchain-list">
           <div
-            v-for="toolchain in status.toolchains"
+            v-for="toolchain in installedToolchains"
             :key="toolchain.name"
             class="toolchain-row"
-            :class="{ active: toolchain.active }"
+            :class="{ default: toolchain.default }"
           >
             <span class="toolchain-dot" />
             <span class="toolchain-name">{{ toolchain.name }}</span>
-            <span v-if="toolchain.active" class="active-label">
+            <span class="toolchain-version">{{ toolchain.release || "未知" }}</span>
+            <span v-if="toolchain.default" class="active-label">
               <el-icon><CircleCheck /></el-icon>
-              当前
+              默认
             </span>
+            <el-button
+              v-else
+              class="row-switch"
+              text
+              :disabled="Boolean(busy)"
+              @click="switchToolchain(toolchain.name)"
+            >
+              设为默认
+            </el-button>
           </div>
         </div>
-        <p v-else class="empty-toolchains">暂未读取到工具链列表。</p>
+      </section>
+
+      <section v-if="busy || actionOutput" class="action-console">
+        <div class="console-head">
+          <span>
+            <el-icon v-if="busy" class="spinning"><Clock /></el-icon>
+            <el-icon v-else-if="actionSuccess === true" class="success-icon">
+              <CircleCheck />
+            </el-icon>
+            <el-icon v-else class="failed-icon"><WarningFilled /></el-icon>
+            {{ busy ? `${busyLabel} · ${elapsedLabel}` : "上次操作日志" }}
+          </span>
+          <span v-if="busy" class="console-hint">请稍候，下载可能需要几分钟</span>
+        </div>
+        <el-progress
+          v-if="busy"
+          :percentage="100"
+          :show-text="false"
+          :indeterminate="true"
+          :duration="1.8"
+          :stroke-width="3"
+        />
+        <pre v-if="actionOutput" class="console-output">{{ actionOutput }}</pre>
       </section>
     </template>
   </section>
@@ -410,12 +719,68 @@ onUnmounted(stopTimer);
   color: #98a2b3;
 }
 
-.version-panel {
+.setup-banner {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  background: #f0fdfa;
+  border: 1px solid #d1f5ec;
+  border-radius: 12px;
+}
+
+.setup-icon {
+  display: grid;
+  flex: 0 0 31px;
+  width: 31px;
+  height: 31px;
+  font-size: 15px;
+  color: #0f766e;
+  background: #edf9f7;
+  border-radius: 8px;
+  place-items: center;
+}
+
+.setup-copy h2 {
+  margin: 0;
+  font-size: 12px;
+  color: #115e59;
+}
+
+.setup-copy p {
+  margin: 3px 0 0;
+  font-size: 10px;
+  line-height: 1.55;
+  color: #5f857e;
+}
+
+.setup-copy code {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 9px;
+}
+
+.setup-versions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  font-family: "Manrope Variable", "Segoe UI", sans-serif;
+  font-size: 9px;
+  color: #0f766e;
+}
+
+.setup-versions span {
+  padding: 4px 6px;
+  background: #e4faf5;
+  border-radius: 4px;
+}
+
+.current-panel {
   position: relative;
   display: flex;
-  gap: 18px;
+  gap: 16px;
   align-items: center;
-  padding: 23px 24px;
+  padding: 20px 22px;
   overflow: hidden;
   color: #f0fffb;
   background:
@@ -426,7 +791,7 @@ onUnmounted(stopTimer);
   box-shadow: 0 18px 42px rgba(16, 24, 40, 0.12);
 }
 
-.version-panel::after {
+.current-panel::after {
   position: absolute;
   top: -100px;
   right: 220px;
@@ -438,25 +803,25 @@ onUnmounted(stopTimer);
   pointer-events: none;
 }
 
-.version-mark {
+.current-mark {
   display: grid;
-  flex: 0 0 52px;
-  width: 52px;
-  height: 52px;
-  font-size: 24px;
+  flex: 0 0 46px;
+  width: 46px;
+  height: 46px;
+  font-size: 22px;
   color: #062c29;
   background: #5eead4;
-  border-radius: 14px;
+  border-radius: 13px;
   box-shadow: 0 9px 24px rgba(45, 212, 191, 0.25);
   place-items: center;
 }
 
-.version-copy {
+.current-copy {
   flex: 1;
   min-width: 0;
 }
 
-.version-label {
+.panel-label {
   font-family: "Manrope Variable", "Segoe UI", sans-serif;
   font-size: 8.5px;
   font-weight: 650;
@@ -465,279 +830,241 @@ onUnmounted(stopTimer);
   text-transform: uppercase;
 }
 
-.version-line {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  margin: 4px 0 5px;
-}
-
-.version-line h2 {
-  margin: 0;
+.current-copy h2 {
+  margin: 4px 0 4px;
   font-family: "Manrope Variable", "Segoe UI", sans-serif;
-  font-size: clamp(34px, 3.4vw, 44px);
+  font-size: clamp(32px, 3.2vw, 42px);
   font-weight: 620;
   line-height: 1;
-  letter-spacing: -1.8px;
+  letter-spacing: -1.6px;
 }
 
-.channel-pill {
-  padding: 4px 7px;
-  font-family: "Manrope Variable", "Segoe UI", sans-serif;
-  font-size: 8.5px;
-  font-weight: 650;
-  color: #9af5e5;
-  text-transform: uppercase;
-  border: 1px solid rgba(94, 234, 212, 0.2);
-  border-radius: 5px;
-}
-
-.version-copy code {
+.current-copy code {
   display: block;
   overflow: hidden;
   font-family: "Cascadia Code", "Consolas", monospace;
-  font-size: 9.5px;
+  font-size: 9px;
   color: #94c9c0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.version-meta {
+.current-latest {
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
-  gap: 8px;
-  max-width: 330px;
+  gap: 3px;
+  align-items: flex-end;
   padding-left: 20px;
   border-left: 1px solid rgba(255, 255, 255, 0.09);
 }
 
-.version-meta div {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  justify-content: flex-end;
+.current-latest span {
   font-size: 9px;
   color: #789489;
 }
 
-.version-meta strong {
-  overflow: hidden;
-  font-family: "Cascadia Code", "Consolas", monospace;
-  font-size: 9px;
-  font-weight: 500;
-  color: #c5ded9;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.current-latest strong {
+  font-family: "Manrope Variable", "Segoe UI", sans-serif;
+  font-size: 18px;
+  font-weight: 600;
+  color: #d4f8f0;
 }
 
-.version-facts {
+.current-latest em {
+  padding: 3px 6px;
+  font-size: 8px;
+  font-style: normal;
+  color: #9af5e5;
+  background: rgba(45, 212, 191, 0.12);
+  border-radius: 4px;
+}
+
+.current-latest em.update-hint {
+  color: #fde68a;
+  background: rgba(251, 191, 36, 0.12);
+}
+
+.latest-warning {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  padding: 9px 11px;
+  margin-top: 9px;
+  font-size: 9px;
+  color: #93370d;
+  background: #fffaeb;
+  border: 1px solid #fedf89;
+  border-radius: 8px;
+}
+
+.latest-warning button {
+  padding: 0;
+  margin-left: auto;
+  font-size: 9px;
+  color: #b54708;
+  text-decoration: underline;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+
+.channel-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 11px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
   margin-top: 12px;
 }
 
-.version-facts article {
+.channel-card {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 13px 15px;
-  background: #fff;
-  border: 1px solid #e4e7ec;
-  border-radius: 11px;
-}
-
-.version-facts span {
-  font-family: "Manrope Variable", "Segoe UI", sans-serif;
-  font-size: 8px;
-  font-weight: 650;
-  letter-spacing: 1px;
-  color: #98a2b3;
-  text-transform: uppercase;
-}
-
-.version-facts strong {
-  overflow: hidden;
-  font-family: "Cascadia Code", "Consolas", monospace;
-  font-size: 10.5px;
-  font-weight: 500;
-  color: #344054;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.update-card {
-  padding: 17px;
-  margin-top: 12px;
+  gap: 11px;
+  padding: 16px;
   background: #fff;
   border: 1px solid #e4e7ec;
   border-radius: 13px;
   box-shadow: 0 9px 26px rgba(16, 24, 40, 0.04);
 }
 
-.update-card.failed {
-  border-color: #fecdca;
+.channel-card.default {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(45, 212, 191, 0.07), transparent 38%),
+    #fff;
+  border-color: #0f766e;
 }
 
-.update-heading {
+.channel-head {
   display: flex;
-  gap: 11px;
+  gap: 10px;
   align-items: flex-start;
+  justify-content: space-between;
 }
 
-.update-icon {
-  display: grid;
-  flex: 0 0 31px;
-  width: 31px;
-  height: 31px;
+.channel-name {
+  display: block;
+  font-family: "Manrope Variable", "Segoe UI", sans-serif;
   font-size: 14px;
-  color: #0f766e;
-  background: #edf9f7;
-  border: 1px solid #d1f5ec;
-  border-radius: 8px;
-  place-items: center;
-}
-
-.update-heading h3 {
-  margin: 1px 0 3px;
-  font-size: 12px;
   font-weight: 650;
   color: #101828;
+  letter-spacing: -0.2px;
 }
 
-.update-heading p {
+.channel-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 8.5px;
+  color: #98a2b3;
+}
+
+.status-badge {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 3px 6px;
+  font-size: 8px;
+  font-weight: 600;
+  color: #475467;
+  background: #f2f4f7;
+  border-radius: 4px;
+}
+
+.status-badge.active {
+  color: #0f766e;
+  background: #edf9f7;
+}
+
+.status-badge.muted {
+  color: #98a2b3;
+  background: #f8fafc;
+}
+
+.status-badge .el-icon {
+  font-size: 9px;
+}
+
+.version-pair {
+  display: flex;
+  gap: 14px;
+  align-items: flex-end;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #eef0f3;
+  border-radius: 8px;
+}
+
+.version-pair > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.version-label {
+  font-size: 8px;
+  color: #98a2b3;
+}
+
+.version-pair strong {
+  font-family: "Manrope Variable", "Segoe UI", sans-serif;
+  font-size: 16px;
+  font-weight: 620;
+  color: #101828;
+  font-variant-numeric: tabular-nums;
+}
+
+.version-pair > div:last-child strong {
+  color: #0f766e;
+}
+
+.version-arrow {
+  padding-bottom: 2px;
+  font-size: 11px;
+  color: #b0b8c4;
+}
+
+.channel-state {
+  flex: 1;
   margin: 0;
-  font-size: 9.5px;
+  font-size: 9px;
   line-height: 1.55;
   color: #667085;
 }
 
-.updating-pill {
-  display: flex;
-  gap: 5px;
-  align-items: center;
-  padding: 4px 7px;
-  margin-left: auto;
-  font-family: "Manrope Variable", "Segoe UI", sans-serif;
-  font-size: 9px;
+.channel-state.ok {
   color: #0f766e;
-  background: #edf9f7;
-  border-radius: 5px;
 }
 
-.success-icon {
-  margin-left: auto;
-  font-size: 19px;
-  color: #0f9f8f;
-}
-
-.failed-icon {
-  margin-left: auto;
-  font-size: 19px;
-  color: #d92d20;
-}
-
-.command-line {
+.channel-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 7px;
   align-items: center;
-  padding: 8px 10px;
-  margin-top: 12px;
-  overflow: hidden;
-  background: #f8fafc;
-  border: 1px solid #eef0f3;
+}
+
+.channel-actions :deep(.el-button) {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 9.5px;
   border-radius: 7px;
 }
 
-.command-line > span {
-  flex: 0 0 auto;
-  font-family: "Cascadia Code", "Consolas", monospace;
-  font-size: 9px;
-  color: #98a2b3;
-}
-
-.command-line code {
-  overflow: hidden;
-  font-family: "Cascadia Code", "Consolas", monospace;
-  font-size: 8.5px;
+.switch-button {
   color: #475467;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.update-progress {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.history-card {
+  padding: 15px 16px;
   margin-top: 12px;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 12px;
 }
 
-.update-progress span {
-  font-size: 9px;
-  color: #98a2b3;
-}
-
-.update-progress :deep(.el-progress-bar__outer) {
-  background: #e9eef2;
-}
-
-.update-actions {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 13px;
-}
-
-.update-hint {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  font-size: 8.5px;
-  color: #98a2b3;
-}
-
-.update-hint .el-icon {
-  font-size: 10px;
-}
-
-.update-button {
-  height: 32px;
-  padding: 0 13px;
-  font-size: 10.5px;
-  border-radius: 8px;
-}
-
-.update-log {
-  max-height: 190px;
-  padding: 11px 13px;
-  margin: 12px 0 0;
-  overflow: auto;
-  font-family: "Cascadia Code", "Consolas", monospace;
-  font-size: 8.5px;
-  line-height: 1.7;
-  color: #c9e6e1;
-  white-space: pre-wrap;
-  background: #0b1422;
-  border: 1px solid #1e2b3c;
-  border-radius: 8px;
-}
-
-.update-log.failed {
-  color: #fecaca;
-  border-color: #5a2627;
-}
-
-.toolchain-section {
-  padding: 21px 3px 0;
-}
-
-.section-heading {
+.history-head {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  padding-bottom: 9px;
+  margin-bottom: 10px;
 }
 
 .section-kicker {
@@ -750,6 +1077,73 @@ onUnmounted(stopTimer);
   color: #8fb8b1;
 }
 
+.history-head h2 {
+  margin: 0;
+  font-family: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+  font-weight: 650;
+  color: #344054;
+}
+
+.history-warning {
+  font-size: 8.5px;
+  color: #b54708;
+}
+
+.history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.history-select {
+  width: 132px;
+}
+
+.history-actions :deep(.el-select__wrapper) {
+  min-height: 30px;
+  box-shadow: 0 0 0 1px #e4e7ec inset;
+}
+
+.history-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 3px;
+  background: #e4e7ec;
+}
+
+.custom-version {
+  width: 132px;
+}
+
+.history-actions :deep(.el-input__wrapper) {
+  min-height: 30px;
+  box-shadow: 0 0 0 1px #e4e7ec inset;
+}
+
+.history-actions :deep(.el-input__inner) {
+  font-size: 9.5px;
+}
+
+.history-actions :deep(.el-button) {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 9.5px;
+  border-radius: 7px;
+}
+
+.installed-section {
+  padding: 20px 3px 0;
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding-bottom: 8px;
+}
+
 .section-heading h2 {
   margin: 0;
   font-family: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei", sans-serif;
@@ -758,15 +1152,12 @@ onUnmounted(stopTimer);
   color: #344054;
 }
 
-.section-hint {
-  font-family: "Cascadia Code", "Consolas", monospace;
-  font-size: 8.5px;
+.section-heading > span {
+  font-size: 9px;
   color: #98a2b3;
 }
 
 .toolchain-list {
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
   background: #fff;
   border: 1px solid #e4e7ec;
@@ -777,7 +1168,7 @@ onUnmounted(stopTimer);
   display: flex;
   gap: 9px;
   align-items: center;
-  padding: 11px 13px;
+  padding: 10px 13px;
   border-bottom: 1px solid #f2f4f7;
 }
 
@@ -785,7 +1176,7 @@ onUnmounted(stopTimer);
   border-bottom: 0;
 }
 
-.toolchain-row.active {
+.toolchain-row.default {
   background: #f7fffd;
 }
 
@@ -796,7 +1187,7 @@ onUnmounted(stopTimer);
   border-radius: 50%;
 }
 
-.toolchain-row.active .toolchain-dot {
+.toolchain-row.default .toolchain-dot {
   background: #14b8a6;
   box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
 }
@@ -810,8 +1201,11 @@ onUnmounted(stopTimer);
   white-space: nowrap;
 }
 
-.toolchain-row.active .toolchain-name {
-  color: #0f766e;
+.toolchain-version {
+  margin-left: auto;
+  font-family: "Manrope Variable", "Segoe UI", sans-serif;
+  font-size: 9.5px;
+  color: #98a2b3;
 }
 
 .active-label {
@@ -819,7 +1213,6 @@ onUnmounted(stopTimer);
   gap: 4px;
   align-items: center;
   padding: 3px 6px;
-  margin-left: auto;
   font-size: 8.5px;
   color: #0f766e;
   background: #edf9f7;
@@ -830,15 +1223,62 @@ onUnmounted(stopTimer);
   font-size: 9px;
 }
 
-.empty-toolchains {
-  padding: 16px;
-  margin: 0;
-  font-size: 10px;
-  color: #98a2b3;
-  text-align: center;
-  background: #fff;
-  border: 1px solid #e4e7ec;
-  border-radius: 11px;
+.row-switch {
+  height: 24px;
+  padding: 0 5px;
+  font-size: 8.5px;
+  color: #667085;
+}
+
+.action-console {
+  padding: 12px 14px;
+  margin-top: 12px;
+  background: #0b1422;
+  border: 1px solid #1e2b3c;
+  border-radius: 10px;
+}
+
+.console-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #a9b8c9;
+}
+
+.console-head > span {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.console-head .el-icon {
+  font-size: 11px;
+}
+
+.console-hint {
+  color: #64748b;
+}
+
+.console-output {
+  max-height: 180px;
+  padding: 0;
+  margin: 9px 0 0;
+  overflow: auto;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8.5px;
+  line-height: 1.7;
+  color: #a9d8d2;
+  white-space: pre-wrap;
+}
+
+.success-icon {
+  color: #2dd4bf;
+}
+
+.failed-icon {
+  color: #f97066;
 }
 
 .spinning {
@@ -860,27 +1300,25 @@ onUnmounted(stopTimer);
   }
 }
 
-@media (max-width: 1120px) {
-  .version-meta {
-    max-width: 280px;
-  }
-}
-
 @media (max-width: 900px) {
   .toolchain-hero {
     align-items: flex-start;
   }
 
-  .version-panel {
+  .channel-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .current-panel {
     align-items: flex-start;
   }
 
-  .version-meta {
+  .current-latest {
     display: none;
   }
 
-  .version-facts {
-    grid-template-columns: 1fr;
+  .history-divider {
+    display: none;
   }
 }
 

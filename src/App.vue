@@ -29,6 +29,7 @@ import {
   listenToScanProgress,
   openFolder,
   pickFolders,
+  probeRustInstallation,
   scanTargets,
 } from "./api";
 import { basename, cleanPath, formatBytes, pathKey } from "./lib/format";
@@ -46,6 +47,7 @@ const themeLabel = computed(() => {
 });
 
 const activePage = ref<"targets" | "sources" | "toolchain">("targets");
+const rustInstalled = ref(false);
 const pageTitle = computed(
   () =>
     ({
@@ -129,7 +131,18 @@ const syncLabel = computed(() => {
   return "待扫描";
 });
 
+async function updateRustInstallationState(installed: boolean) {
+  rustInstalled.value = installed;
+  if (!installed && activePage.value === "sources") {
+    activePage.value = "toolchain";
+  }
+}
+
 onMounted(async () => {
+  void probeRustInstallation()
+    .then((probe) => updateRustInstallationState(probe.installed))
+    .catch(() => updateRustInstallationState(false));
+
   try {
     unlistenProgress = await listenToScanProgress((payload) => {
       progress.value = payload;
@@ -355,6 +368,10 @@ function changeTheme(command: string) {
 }
 
 function navigateTo(page: "targets" | "sources" | "toolchain") {
+  if (page === "sources" && !rustInstalled.value) {
+    activePage.value = "toolchain";
+    return;
+  }
   if (page !== "targets") {
     selectedRows.value = [];
     tableRef.value?.clearSelection();
@@ -439,6 +456,7 @@ function uniqueRoots(list: string[]): string[] {
       :update-available="hasUpdate"
       :checking-updates="checkingUpdates"
       :active-page="activePage"
+      :rust-installed="rustInstalled"
       @add="addRoots"
       @remove="removeRoot"
       @check-update="manualCheckUpdate"
@@ -624,8 +642,8 @@ function uniqueRoots(list: string[]): string[] {
         </section>
       </template>
 
-      <CargoSourcePage v-else-if="activePage === 'sources'" />
-      <RustToolchainPage v-else />
+      <CargoSourcePage v-else-if="activePage === 'sources' && rustInstalled" />
+      <RustToolchainPage v-else @rust-state="updateRustInstallationState" />
 
       <footer class="app-footer">
         <span class="footer-brand">Cargo Sweep · github.com/xwwpy/cargo-sweep</span>
@@ -633,7 +651,7 @@ function uniqueRoots(list: string[]): string[] {
           <i />
           校验 Cargo.toml · 跳过符号链接
         </span>
-        <span v-else-if="activePage === 'sources'" class="footer-note">
+        <span v-else-if="activePage === 'sources' && rustInstalled" class="footer-note">
           <i />
           切换前自动备份 Cargo 配置
         </span>

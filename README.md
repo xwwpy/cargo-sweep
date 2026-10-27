@@ -23,10 +23,10 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 - 按项目查看：项目名、完整 target 路径、占用空间、文件数、最近构建时间
 - 一键打开：在文件资源管理器中直接打开选中的 target 目录
 - 清爽路径：自动移除 Windows 规范化路径的 `\\?\` 前缀
-- Cargo 源管理：自动检测当前全局下载源，内置常见镜像并支持自定义源
+- Cargo 源管理：自动检测当前全局下载源，内置常见镜像并支持自定义源（仅在已安装 Rust 工具链时显示）
 - 快速筛选：按项目名或路径实时搜索
 - 分页浏览：每页 5 / 10 / 20 项，多选状态可跨页保留
-- Rust 工具链：显示当前 rustc、Cargo、rustup 版本与活动工具链，支持一键更新
+- Rust 工具链：显示当前与最新版本，支持安装最新/历史版本、Stable/Nightly 切换与按需更新
 - 三种清理方式：
   - 单条「清理」
   - 勾选多条后「删除所选」
@@ -174,8 +174,8 @@ pnpm tauri build --bundles deb,appimage
 
 ```bash
 git add .
-git commit -m "release: v0.4.0"
-git tag v0.4.0
+git commit -m "release: v0.4.1"
+git tag v0.4.1
 git push origin main --tags
 ```
 
@@ -210,6 +210,26 @@ git push origin main --tags
 > 此处只修改全局配置。项目内的 `.cargo/config.toml` 优先级更高；如果项目目录中有单独
 > 配置，它可能会覆盖这里的选择。
 
+> Cargo 下载源入口只在检测到 Rust 工具链时显示。没有 Rust 工具链时，请先在
+> 「Rust 工具链」页面安装 Stable 或 Nightly。
+
+## Rust 工具链管理
+
+侧栏的「Rust 工具链」页面会读取每个工具链的 rustc 版本，并获取 Stable / Nightly
+的最新版本：
+
+- 同时展示当前版本与最新版本
+- 两者相同时更新按钮显示「已是最新」并禁用，不会重复执行更新
+- 支持安装最新 Stable、Nightly
+- 支持安装最近的历史版本，也支持输入 `1.85.0` 这类自定义版本
+- 支持在已安装的 Stable / Nightly 之间切换默认工具链
+- 显示所有已安装工具链及其版本
+- 下载与更新通过 `rustup` 执行，并展示耗时与输出日志
+- 未安装 Rust 工具链时会提示安装；安装完成后 Cargo 下载源入口自动出现
+
+> 安装新工具链需要系统已安装 `rustup`。如果只安装了 rustc 而没有 rustup，页面仍可
+> 查看当前版本，但会提示先安装 rustup。
+
 ## 使用方式
 
 顶栏右侧的主题按钮支持「浅色 / 深色 / 跟随系统」，选择会自动保存，下次启动继续使用。
@@ -221,7 +241,7 @@ git push origin main --tags
 5. 点击单行的「清理」，或勾选多行后点击「删除所选」，也可以直接「一键清理」。
 6. 在确认弹窗中检查目录与预计释放空间，确认后执行删除。
 7. 打开侧栏「Cargo 下载源」，检测当前源，选择镜像或自定义源后应用切换。
-8. 打开侧栏「Rust 工具链」，查看当前版本，需要时点击「一键更新」。
+8. 打开侧栏「Rust 工具链」，查看当前/最新版本，按需更新、安装历史版本或切换 Stable/Nightly。
 
 下次执行 `cargo build` 时，Cargo 会按需重新生成 `target`，不会影响源码。
 
@@ -231,7 +251,7 @@ Release 会同时提供 Windows、macOS 和 Linux 安装包。下载地址：
 
 <https://github.com/xwwpy/cargo-sweep/releases/latest>
 
-下面的命令以 **0.4.0** 为例，后续版本只需替换文件名中的版本号。
+下面的命令以 **0.4.1** 为例，后续版本只需替换文件名中的版本号。
 
 ### Windows
 
@@ -263,7 +283,7 @@ Error writing temporary file. Make sure your temp folder is valid.
 下载通用 DMG：
 
 ```text
-Cargo-Sweep-0.4.0-universal.dmg
+Cargo-Sweep-0.4.1-universal.dmg
 ```
 
 安装步骤：
@@ -271,7 +291,7 @@ Cargo-Sweep-0.4.0-universal.dmg
 1. 打开 DMG：
 
 ```bash
-open ~/Downloads/Cargo-Sweep-0.4.0-universal.dmg
+open ~/Downloads/Cargo-Sweep-0.4.1-universal.dmg
 ```
 
 2. 将 **Cargo Sweep** 拖入「应用程序」文件夹。
@@ -288,21 +308,21 @@ xattr -dr com.apple.quarantine "/Applications/Cargo Sweep.app"
 下载 DEB：
 
 ```text
-Cargo-Sweep-0.4.0-amd64.deb
+Cargo-Sweep-0.4.1-amd64.deb
 ```
 
 在下载目录执行：
 
 ```bash
 cd ~/Downloads
-sudo apt install ./Cargo-Sweep-0.4.0-amd64.deb
+sudo apt install ./Cargo-Sweep-0.4.1-amd64.deb
 ```
 
 `apt install ./xxx.deb` 会自动安装 WebKitGTK 等依赖。如果当前发行版的 `apt` 不接受本地
 DEB，可改用：
 
 ```bash
-sudo dpkg -i ./Cargo-Sweep-0.4.0-amd64.deb
+sudo dpkg -i ./Cargo-Sweep-0.4.1-amd64.deb
 sudo apt-get install -f
 ```
 
@@ -321,8 +341,8 @@ sudo apt remove cargo-sweep
 如果不使用 DEB，也可以下载便携版 AppImage：
 
 ```bash
-chmod +x Cargo-Sweep-0.4.0-amd64.AppImage
-./Cargo-Sweep-0.4.0-amd64.AppImage
+chmod +x Cargo-Sweep-0.4.1-amd64.AppImage
+./Cargo-Sweep-0.4.1-amd64.AppImage
 ```
 
 DEB 使用 Ubuntu 24.04 的 WebKitGTK 4.1 构建，建议在 Ubuntu 24.04+ 或兼容发行版安装；
@@ -361,8 +381,12 @@ DEB 使用 Ubuntu 24.04 的 WebKitGTK 4.1 构建，建议在 Ubuntu 24.04+ 或�
 | `delete_targets` | 校验并删除指定 target，返回释放空间与失败列表 |
 | `detect_cargo_source` | 读取全局 Cargo 配置并解析当前下载源 |
 | `apply_cargo_source` | 备份并切换 Cargo 下载源 |
-| `detect_rust_toolchain` | 读取 rustc、Cargo、rustup 与工具链信息 |
-| `update_rust_toolchain` | 通过 rustup 更新当前工具链 |
+| `probe_rust_installation` | 快速检测 Rust 工具链是否存在 |
+| `detect_rust_toolchain` | 读取当前版本、已安装工具链与 Stable/Nightly 状态 |
+| `check_rust_toolchain_latest` | 获取 Stable/Nightly 最新版本与历史版本列表 |
+| `install_rust_toolchain` | 安装最新、历史或自定义 Rust 工具链 |
+| `set_default_rust_toolchain` | 切换默认工具链 |
+| `update_rust_toolchain` | 通过 rustup 更新指定工具链 |
 | `open_folder` | 在系统文件管理器中打开指定目录 |
 
 前端通过 Tauri 事件 `scan-progress` 接收扫描阶段、当前根目录和已发现数量。

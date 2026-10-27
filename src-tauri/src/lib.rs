@@ -3,7 +3,9 @@ mod rust_toolchain;
 mod scanner;
 
 use cargo_source::{ApplySourceResult, CargoSourceStatus};
-use rust_toolchain::{RustToolchainStatus, ToolchainUpdateResult};
+use rust_toolchain::{
+    LatestRustVersions, RustInstallationProbe, RustToolchainStatus, ToolchainOperationResult,
+};
 use scanner::{DeleteResult, ScanProgress, ScanResult};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -119,6 +121,11 @@ async fn apply_cargo_source(url: String) -> Result<ApplySourceResult, String> {
 }
 
 #[tauri::command]
+fn probe_rust_installation() -> RustInstallationProbe {
+    rust_toolchain::probe()
+}
+
+#[tauri::command]
 async fn detect_rust_toolchain() -> Result<RustToolchainStatus, String> {
     tauri::async_runtime::spawn_blocking(rust_toolchain::detect)
         .await
@@ -126,8 +133,32 @@ async fn detect_rust_toolchain() -> Result<RustToolchainStatus, String> {
 }
 
 #[tauri::command]
-async fn update_rust_toolchain() -> Result<ToolchainUpdateResult, String> {
-    tauri::async_runtime::spawn_blocking(rust_toolchain::update)
+async fn check_rust_toolchain_latest() -> Result<LatestRustVersions, String> {
+    tauri::async_runtime::spawn_blocking(rust_toolchain::latest)
+        .await
+        .map_err(|error| format!("检查 Rust 最新版本任务异常退出：{error}"))?
+}
+
+#[tauri::command]
+async fn install_rust_toolchain(
+    target: String,
+    set_default: bool,
+) -> Result<ToolchainOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || rust_toolchain::install(target, set_default))
+        .await
+        .map_err(|error| format!("安装 Rust 工具链任务异常退出：{error}"))?
+}
+
+#[tauri::command]
+async fn set_default_rust_toolchain(target: String) -> Result<ToolchainOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || rust_toolchain::set_default(target))
+        .await
+        .map_err(|error| format!("切换 Rust 工具链任务异常退出：{error}"))?
+}
+
+#[tauri::command]
+async fn update_rust_toolchain(target: Option<String>) -> Result<ToolchainOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || rust_toolchain::update(target))
         .await
         .map_err(|error| format!("更新 Rust 工具链任务异常退出：{error}"))?
 }
@@ -177,7 +208,11 @@ pub fn run() {
             default_scan_roots,
             detect_cargo_source,
             apply_cargo_source,
+            probe_rust_installation,
             detect_rust_toolchain,
+            check_rust_toolchain_latest,
+            install_rust_toolchain,
+            set_default_rust_toolchain,
             update_rust_toolchain,
             open_folder
         ])

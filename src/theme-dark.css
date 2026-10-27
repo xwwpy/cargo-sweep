@@ -700,6 +700,161 @@ html.dark .empty-toolchains {
   border-color: #1f2d40;
 }
 
+html.dark .setup-banner {
+  background: #0d2b2a;
+  border-color: #1f4f49;
+}
+
+html.dark .setup-icon {
+  color: #5eead4;
+  background: #0f3b37;
+}
+
+html.dark .setup-copy h2 {
+  color: #b8f5ec;
+}
+
+html.dark .setup-copy p {
+  color: #7fa9a1;
+}
+
+html.dark .setup-versions {
+  color: #5eead4;
+}
+
+html.dark .setup-versions span {
+  background: #123b36;
+}
+
+html.dark .latest-warning {
+  color: #fdb022;
+  background: #2b1d0b;
+  border-color: #5a3a17;
+}
+
+html.dark .latest-warning button {
+  color: #fdb022;
+}
+
+html.dark .channel-card {
+  background: #0f1726;
+  border-color: #1f2d40;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+}
+
+html.dark .channel-card.default {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(45, 212, 191, 0.1), transparent 38%),
+    #0f1726;
+  border-color: #2dd4bf;
+}
+
+html.dark .channel-name {
+  color: #f0f5fb;
+}
+
+html.dark .channel-sub,
+html.dark .version-label {
+  color: #7f8ea3;
+}
+
+html.dark .status-badge {
+  color: #a9b8c9;
+  background: #142032;
+}
+
+html.dark .status-badge.active {
+  color: #5eead4;
+  background: #0d2b2a;
+}
+
+html.dark .status-badge.muted {
+  color: #64748b;
+  background: #0b1422;
+}
+
+html.dark .version-pair {
+  background: #0b1422;
+  border-color: #1e2b3c;
+}
+
+html.dark .version-pair strong {
+  color: #f0f5fb;
+}
+
+html.dark .version-pair > div:last-child strong {
+  color: #5eead4;
+}
+
+html.dark .version-arrow {
+  color: #3e4c60;
+}
+
+html.dark .channel-state {
+  color: #94a3b8;
+}
+
+html.dark .channel-state.ok {
+  color: #5eead4;
+}
+
+html.dark .switch-button {
+  color: #a9b8c9;
+}
+
+html.dark .history-card {
+  background: #0f1726;
+  border-color: #1f2d40;
+}
+
+html.dark .history-head h2,
+html.dark .installed-section .section-heading h2 {
+  color: #d7e2ef;
+}
+
+html.dark .history-warning {
+  color: #fdb022;
+}
+
+html.dark .history-actions .el-select__wrapper,
+html.dark .history-actions .el-input__wrapper {
+  background: #0e1928;
+  box-shadow: 0 0 0 1px #243244 inset;
+}
+
+html.dark .history-actions .el-input__inner {
+  color: #e6edf6;
+}
+
+html.dark .history-divider {
+  background: #243244;
+}
+
+html.dark .toolchain-row.default {
+  background: #0d2b2a;
+}
+
+html.dark .toolchain-row.default .toolchain-dot {
+  background: #5eead4;
+  box-shadow: 0 0 0 3px rgba(94, 234, 212, 0.1);
+}
+
+html.dark .toolchain-row.default .toolchain-name {
+  color: #5eead4;
+}
+
+html.dark .toolchain-version {
+  color: #7f8ea3;
+}
+
+html.dark .row-switch {
+  color: #94a3b8;
+}
+
+html.dark .installed-section .section-heading > span {
+  color: #7f8ea3;
+}
+
 /* src/components/CargoSourcePage.vue */
 html.dark .source-hero h1 {
   color: #f1f6fc;

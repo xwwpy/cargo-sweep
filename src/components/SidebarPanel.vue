@@ -20,6 +20,7 @@ defineProps<{
   updateAvailable: boolean;
   checkingUpdates: boolean;
   activePage: "targets" | "sources" | "toolchain";
+  rustInstalled: boolean;
 }>();
 
 defineEmits<{
@@ -52,6 +53,7 @@ defineEmits<{
         <span class="nav-hint">Targets</span>
       </button>
       <button
+        v-if="rustInstalled"
         class="nav-item"
         :class="{ active: activePage === 'sources' }"
         type="button"
