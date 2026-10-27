@@ -6,6 +6,7 @@ dist/
 dist-ssr/
 release/
 .packaging/
+.release-notes.md
 src-tauri/target/
 src-tauri/gen/
 

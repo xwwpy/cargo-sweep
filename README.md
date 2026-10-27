@@ -129,7 +129,9 @@ pnpm tauri build --bundles nsis
 
 1. 同步修改 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 与
    `src/lib/version.ts` 的版本号。
-2. 提交代码并推送标签：
+2. 在 `CHANGELOG.md` 顶部添加当前版本的小节，只写这次的新功能和 Bug 修复。发布流程只会
+   提取当前版本的小节，不会把历史功能重复写进新 Release。
+3. 提交代码并推送标签：
 
 ```bash
 git add .
@@ -138,7 +140,7 @@ git tag v0.3.0
 git push origin main --tags
 ```
 
-3. GitHub Actions 会使用 `TAURI_SIGNING_PRIVATE_KEY` 构建带签名的 NSIS 安装包，生成并上传
+4. GitHub Actions 会使用 `TAURI_SIGNING_PRIVATE_KEY` 构建带签名的 NSIS 安装包，生成并上传
    `latest.json`，同时打包免安装版和带临时目录修复的安装脚本。
 
 > 如果私钥丢失，已发布版本将无法再收到更新。请把私钥和密码（如有）备份到安全位置。
@@ -246,6 +248,7 @@ Error writing temporary file. Make sure your temp folder is valid.
 ```text
 cargo-sweep/
 ├─ .github/workflows/release.yml  # 标签触发的签名发布
+├─ CHANGELOG.md                   # 每个版本仅记录当次功能与修复
 ├─ src/
 │  ├─ App.vue                     # 页面状态、扫描、清理与更新入口
 │  ├─ api.ts                      # Tauri invoke / 事件 / 目录选择封装
@@ -262,6 +265,7 @@ cargo-sweep/
 │  └─ styles.css                  # Ink & Mint 主题
 ├─ packaging/                     # 发布包说明与启动脚本模板
 ├─ scripts/package-release.ps1    # 本地 / CI 发布包打包
+├─ scripts/release-notes.mjs      # 从 CHANGELOG 提取当前版本发布说明
 ├─ scripts/fix-updater-notes.mjs  # 修正更新清单的 UTF-8 发布说明
 ├─ src-tauri/
 │  ├─ src/scanner.rs              # 扫描、测量、校验、删除与单元测试
