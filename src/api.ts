@@ -3,6 +3,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   ApplyCargoSourceResult,
+  CargoHomeMigrationResult,
+  CargoHomeStatus,
   CargoSourceStatus,
   DeleteResult,
   LatestRustVersions,
@@ -14,11 +16,14 @@ import type {
 } from "./types";
 import {
   demoApplyCargoSource,
+  demoCargoHomeStatus,
   demoCargoSourceStatus,
   demoCheckRustLatest,
   demoDelete,
   demoInstallRustup,
   demoInstallRustToolchain,
+  demoMigrateCargoHome,
+  demoPickCargoHomeFolder,
   demoProbeRustInstallation,
   demoRoots,
   demoRustToolchainStatus,
@@ -84,6 +89,47 @@ export async function applyCargoSource(url: string): Promise<ApplyCargoSourceRes
     throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
   }
   return invoke<ApplyCargoSourceResult>("apply_cargo_source", { url });
+}
+
+export async function getCargoHomeStatus(): Promise<CargoHomeStatus> {
+  if (isDemoMode()) {
+    return demoCargoHomeStatus();
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<CargoHomeStatus>("cargo_home_status");
+}
+
+export async function migrateCargoHome(
+  target: string,
+  createLink: boolean,
+): Promise<CargoHomeMigrationResult> {
+  if (isDemoMode()) {
+    return demoMigrateCargoHome(target, createLink);
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<CargoHomeMigrationResult>("migrate_cargo_home", {
+    target,
+    createLink,
+  });
+}
+
+export async function pickCargoHomeFolder(): Promise<string | null> {
+  if (isDemoMode()) {
+    return demoPickCargoHomeFolder();
+  }
+  if (!isTauriRuntime()) {
+    return null;
+  }
+  const selection = await open({
+    directory: true,
+    multiple: false,
+    title: "选择新的 CARGO_HOME 目录",
+  });
+  return typeof selection === "string" ? selection : null;
 }
 
 export async function probeRustInstallation(): Promise<RustInstallationProbe> {

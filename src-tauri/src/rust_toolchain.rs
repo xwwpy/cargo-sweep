@@ -89,6 +89,7 @@ struct AppSettings {
 }
 
 pub fn probe() -> RustInstallationProbe {
+    crate::cargo_home::apply_saved_cargo_home();
     let rustup_path = prepare_rust_environment();
     let rustc_version = run("rustc", &["--version"])
         .ok()
@@ -105,6 +106,7 @@ pub fn probe() -> RustInstallationProbe {
 }
 
 pub fn detect() -> Result<RustToolchainStatus, String> {
+    crate::cargo_home::apply_saved_cargo_home();
     let rustup_path = prepare_rust_environment();
     let settings = read_settings();
     let rustup_version = run("rustup", &["--version"])

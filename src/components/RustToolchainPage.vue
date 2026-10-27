@@ -15,13 +15,17 @@ import {
   checkRustToolchainLatest,
   detectRustToolchain,
   errorMessage,
+  getCargoHomeStatus,
   installRustup,
   installRustToolchain,
+  migrateCargoHome,
+  pickCargoHomeFolder,
   setDefaultRustToolchain,
   setRustupPath,
   updateRustToolchain,
 } from "../api";
 import type {
+  CargoHomeStatus,
   LatestRustToolchain,
   LatestRustVersions,
   RustChannel,
@@ -59,6 +63,13 @@ const elapsed = ref(0);
 const historyTarget = ref("");
 const customTarget = ref("");
 const rustupPathInput = ref("");
+const cargoHome = ref<CargoHomeStatus | null>(null);
+const cargoHomeError = ref<string | null>(null);
+const cargoHomeDialog = ref(false);
+const cargoHomeTarget = ref("");
+const createCargoLink = ref(true);
+const cargoMigrating = ref(false);
+const migrationError = ref<string | null>(null);
 let timer: number | undefined;
 
 const rustupReady = computed(() => status.value?.rustupInstalled ?? false);
@@ -91,6 +102,39 @@ const currentIsLatest = computed(() => {
 const historyOptions = computed(() => latest.value?.historicalVersions ?? []);
 const installedToolchains = computed(() => status.value?.toolchains ?? []);
 const busyLabel = computed(() => busy.value ?? "");
+const environmentRows = computed(() => {
+  if (!cargoHome.value) {
+    return [];
+  }
+  return [
+    {
+      name: "PATH",
+      value: cargoHome.value.cargoBin,
+      note: cargoHome.value.pathContainsCargoBin ? "已包含" : "安装/迁移后追加",
+    },
+    {
+      name: "CARGO_HOME",
+      value: cargoHome.value.current,
+      note:
+        cargoHome.value.source === "environment"
+          ? "用户环境变量"
+          : cargoHome.value.source === "app"
+            ? "应用配置"
+            : "默认路径",
+    },
+    {
+      name: "RUSTUP_HOME",
+      value: cargoHome.value.rustupHome,
+      note: "保持不变",
+    },
+  ];
+});
+const linkLabel = computed(() => {
+  if (!cargoHome.value?.linkExists) {
+    return "未创建链接";
+  }
+  return cargoHome.value.linkMatches ? "链接已创建" : "链接指向其他位置";
+});
 const elapsedLabel = computed(() => {
   const minutes = Math.floor(elapsed.value / 60);
   const seconds = elapsed.value % 60;
@@ -196,9 +240,19 @@ async function loadLatest() {
   }
 }
 
+async function loadCargoHome() {
+  cargoHomeError.value = null;
+  try {
+    cargoHome.value = await getCargoHomeStatus();
+  } catch (reason) {
+    cargoHomeError.value = errorMessage(reason);
+  }
+}
+
 async function load() {
   loading.value = true;
   error.value = null;
+  void loadCargoHome();
   try {
     status.value = await detectRustToolchain();
     rustupPathInput.value =
@@ -267,6 +321,60 @@ async function saveRustupPath() {
 
 async function installRustupAction() {
   await runOperation("rustup", installRustup, "rustup 已安装");
+}
+
+function openCargoHomeDialog() {
+  if (!cargoHome.value || cargoHome.value.linkExists || busy.value) {
+    return;
+  }
+  cargoHomeTarget.value = "";
+  createCargoLink.value = true;
+  migrationError.value = null;
+  cargoHomeDialog.value = true;
+}
+
+async function pickCargoHomeTarget() {
+  const selected = await pickCargoHomeFolder();
+  if (selected) {
+    cargoHomeTarget.value = selected;
+  }
+}
+
+async function runCargoHomeMigration() {
+  if (!cargoHomeTarget.value.trim()) {
+    ElMessage.warning("请选择新的 CARGO_HOME 目录");
+    return;
+  }
+  if (busy.value) {
+    return;
+  }
+  busy.value = "migrate-cargo-home";
+  cargoMigrating.value = true;
+  migrationError.value = null;
+  actionOutput.value = null;
+  actionSuccess.value = null;
+  startTimer();
+  try {
+    const result = await migrateCargoHome(
+      cargoHomeTarget.value.trim(),
+      createCargoLink.value,
+    );
+    cargoHome.value = result.status;
+    actionOutput.value = result.output;
+    actionSuccess.value = true;
+    cargoHomeDialog.value = false;
+    ElMessage.success("CARGO_HOME 已迁移");
+    await load();
+  } catch (reason) {
+    migrationError.value = errorMessage(reason);
+    actionOutput.value = migrationError.value;
+    actionSuccess.value = false;
+    ElMessage.error("迁移失败，请查看日志");
+  } finally {
+    stopTimer();
+    busy.value = null;
+    cargoMigrating.value = false;
+  }
 }
 
 async function installChannel(view: ChannelView) {
@@ -454,6 +562,60 @@ onUnmounted(stopTimer);
         <button type="button" @click="retryLatest">重试</button>
       </div>
 
+      <section v-if="cargoHome" class="cargo-home-card">
+        <div class="env-head">
+          <div>
+            <span class="section-kicker">ENVIRONMENT</span>
+            <h2>环境变量与 Cargo 存储</h2>
+            <p class="env-sub">安装工具链 / rustup 时使用；PATH 只会在缺失时追加。</p>
+          </div>
+          <span
+            class="link-badge"
+            :class="{
+              ok: cargoHome.linkExists && cargoHome.linkMatches,
+              warn: cargoHome.linkExists && !cargoHome.linkMatches,
+            }"
+          >
+            {{ linkLabel }}
+          </span>
+        </div>
+
+        <div class="env-grid">
+          <div v-for="row in environmentRows" :key="row.name" class="env-item">
+            <div class="env-item-head">
+              <code>{{ row.name }}</code>
+              <span>{{ row.note }}</span>
+            </div>
+            <p>{{ row.value }}</p>
+          </div>
+        </div>
+
+        <div v-if="cargoHome.linkExists" class="link-detail">
+          <span>旧路径链接</span>
+          <code>{{ cargoHome.default }}</code>
+          <span>→</span>
+          <code>{{ cargoHome.linkTarget || "未知目标" }}</code>
+        </div>
+
+        <div class="cargo-home-footer">
+          <p>
+            更改位置会迁移 registry、git 缓存和 Cargo 配置，建议先关闭正在运行的 cargo 构建。
+          </p>
+          <el-button
+            :disabled="cargoHome.linkExists || Boolean(busy)"
+            :title="cargoHome.linkExists ? '已检测到旧路径链接，无需再次迁移' : ''"
+            @click="openCargoHomeDialog"
+          >
+            更改 CARGO_HOME
+          </el-button>
+        </div>
+      </section>
+
+      <div v-else-if="cargoHomeError" class="cargo-home-error">
+        <el-icon><WarningFilled /></el-icon>
+        {{ cargoHomeError }}
+      </div>
+
       <div class="channel-grid">
         <article
           v-for="channel in channelViews"
@@ -633,6 +795,68 @@ onUnmounted(stopTimer);
         <pre v-if="actionOutput" class="console-output">{{ actionOutput }}</pre>
       </section>
     </template>
+
+    <el-dialog
+      v-model="cargoHomeDialog"
+      title="更改 CARGO_HOME"
+      width="580px"
+      :close-on-click-modal="!cargoMigrating"
+      :close-on-press-escape="!cargoMigrating"
+      :show-close="!cargoMigrating"
+    >
+      <div class="migration-dialog">
+        <p class="migration-intro">
+          将当前 Cargo 数据迁移到新目录，并为用户设置 <code>CARGO_HOME</code>。
+          迁移期间请不要运行 cargo / rustup。
+        </p>
+        <div class="migration-current">
+          <span>当前位置</span>
+          <code>{{ cargoHome?.current }}</code>
+        </div>
+        <div class="migration-target">
+          <el-input
+            v-model="cargoHomeTarget"
+            placeholder="选择新的空目录（建议非系统盘）"
+            :disabled="cargoMigrating"
+          />
+          <el-button :disabled="cargoMigrating" @click="pickCargoHomeTarget">
+            选择目录
+          </el-button>
+        </div>
+
+        <div class="migration-env">
+          <span class="migration-env-title">迁移后环境变量</span>
+          <div><code>CARGO_HOME</code><span>{{ cargoHomeTarget || "新目录" }}</span></div>
+          <div><code>PATH</code><span>追加 新目录/bin</span></div>
+          <div>
+            <code>RUSTUP_HOME</code>
+            <span>{{ cargoHome?.rustupHome }}（保持不变）</span>
+          </div>
+        </div>
+
+        <el-checkbox v-model="createCargoLink" :disabled="cargoMigrating">
+          在旧路径 <code>~/.cargo</code> 创建链接（推荐）
+        </el-checkbox>
+        <p class="migration-hint">
+          创建链接后，依赖默认 <code>~/.cargo</code> 的其他应用仍可正常使用；
+          不创建时，这些应用需要重新登录或手动设置 CARGO_HOME 与 PATH。
+        </p>
+        <div v-if="migrationError" class="migration-error">{{ migrationError }}</div>
+      </div>
+      <template #footer>
+        <el-button :disabled="cargoMigrating" @click="cargoHomeDialog = false">
+          取消
+        </el-button>
+        <el-button
+          type="primary"
+          :loading="cargoMigrating"
+          :disabled="!cargoHomeTarget || Boolean(busy)"
+          @click="runCargoHomeMigration"
+        >
+          开始迁移
+        </el-button>
+      </template>
+    </el-dialog>
   </section>
 </template>
 
@@ -1024,6 +1248,266 @@ onUnmounted(stopTimer);
   cursor: pointer;
   background: transparent;
   border: 0;
+}
+
+.cargo-home-card {
+  padding: 15px 16px;
+  margin-top: 12px;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 12px;
+}
+
+.env-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.env-head h2 {
+  margin: 0;
+  font-family: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+  font-weight: 650;
+  color: #344054;
+}
+
+.env-sub {
+  margin: 4px 0 0;
+  font-size: 8.5px;
+  color: #98a2b3;
+}
+
+.link-badge {
+  padding: 3px 6px;
+  font-size: 8px;
+  color: #667085;
+  background: #f2f4f7;
+  border-radius: 4px;
+}
+
+.link-badge.ok {
+  color: #0f766e;
+  background: #edf9f7;
+}
+
+.link-badge.warn {
+  color: #b54708;
+  background: #fffaeb;
+}
+
+.env-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 11px;
+}
+
+.env-item {
+  min-width: 0;
+  padding: 8px 9px;
+  background: #f8fafc;
+  border: 1px solid #eef0f3;
+  border-radius: 7px;
+}
+
+.env-item-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.env-item-head code {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8.5px;
+  font-weight: 600;
+  color: #0f766e;
+}
+
+.env-item-head span {
+  font-size: 7.5px;
+  color: #98a2b3;
+  white-space: nowrap;
+}
+
+.env-item p {
+  margin: 4px 0 0;
+  overflow: hidden;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8px;
+  color: #667085;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-detail {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  margin-top: 7px;
+  overflow: hidden;
+  font-size: 8.5px;
+  color: #667085;
+  background: #f0fdfa;
+  border: 1px solid #d1f5ec;
+  border-radius: 6px;
+}
+
+.link-detail code {
+  overflow: hidden;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8px;
+  color: #0f766e;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cargo-home-footer {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  margin-top: 10px;
+  border-top: 1px solid #f2f4f7;
+}
+
+.cargo-home-footer p {
+  max-width: 620px;
+  margin: 0;
+  font-size: 8.5px;
+  line-height: 1.6;
+  color: #98a2b3;
+}
+
+.cargo-home-footer :deep(.el-button) {
+  flex: 0 0 auto;
+  height: 29px;
+  padding: 0 10px;
+  font-size: 9px;
+  border-radius: 7px;
+}
+
+.cargo-home-error {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  margin-top: 9px;
+  font-size: 9px;
+  color: #b54708;
+  background: #fffaeb;
+  border: 1px solid #fedf89;
+  border-radius: 7px;
+}
+
+.migration-dialog {
+  font-size: 10px;
+  color: #475467;
+}
+
+.migration-intro {
+  margin: 0 0 12px;
+  line-height: 1.7;
+}
+
+.migration-intro code,
+.migration-hint code {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 9px;
+  color: #0f766e;
+}
+
+.migration-current {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 9px;
+  margin-bottom: 8px;
+  background: #f8fafc;
+  border-radius: 6px;
+}
+
+.migration-current span {
+  font-size: 9px;
+  color: #98a2b3;
+}
+
+.migration-current code {
+  overflow: hidden;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 9px;
+  color: #475467;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.migration-target {
+  display: flex;
+  gap: 7px;
+}
+
+.migration-target :deep(.el-input__wrapper) {
+  min-height: 31px;
+}
+
+.migration-target :deep(.el-button) {
+  height: 31px;
+  padding: 0 10px;
+  font-size: 9px;
+  border-radius: 7px;
+}
+
+.migration-env {
+  padding: 9px 10px;
+  margin: 10px 0;
+  background: #f0fdfa;
+  border: 1px solid #d1f5ec;
+  border-radius: 7px;
+}
+
+.migration-env-title {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 8px;
+  font-weight: 600;
+  color: #0f766e;
+  letter-spacing: 0.5px;
+}
+
+.migration-env > div {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 9px;
+  color: #667085;
+}
+
+.migration-env code {
+  flex: 0 0 84px;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8.5px;
+  color: #0f766e;
+}
+
+.migration-hint {
+  margin: 6px 0 0;
+  font-size: 9px;
+  line-height: 1.65;
+  color: #98a2b3;
+}
+
+.migration-error {
+  padding: 7px 8px;
+  margin-top: 9px;
+  font-size: 9px;
+  color: #b42318;
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+  border-radius: 6px;
 }
 
 .channel-grid {
@@ -1422,8 +1906,14 @@ onUnmounted(stopTimer);
     align-items: flex-start;
   }
 
-  .channel-grid {
+  .channel-grid,
+  .env-grid {
     grid-template-columns: 1fr;
+  }
+
+  .cargo-home-footer {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .current-panel {

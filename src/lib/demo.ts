@@ -1,5 +1,7 @@
 import type {
   ApplyCargoSourceResult,
+  CargoHomeMigrationResult,
+  CargoHomeStatus,
   CargoSourceStatus,
   DeleteResult,
   LatestRustVersions,
@@ -105,6 +107,46 @@ export async function demoApplyCargoSource(url: string): Promise<ApplyCargoSourc
       url === OFFICIAL_INDEX ? null : "C:\\Users\\PC\\.cargo\\config.toml.cargo-sweep-backup-demo",
     status,
   };
+}
+
+let demoCargoHome = "C:\\Users\\demo\\.cargo";
+let demoCargoHomeEnvSet = false;
+let demoCargoHomeLinkTarget: string | null = null;
+
+export async function demoCargoHomeStatus(): Promise<CargoHomeStatus> {
+  await new Promise((resolve) => window.setTimeout(resolve, 300));
+  return {
+    current: demoCargoHome,
+    default: "C:\\Users\\demo\\.cargo",
+    source: demoCargoHomeEnvSet ? "environment" : "default",
+    cargoBin: `${demoCargoHome}\\bin`,
+    rustupHome: "C:\\Users\\demo\\.rustup",
+    pathContainsCargoBin: true,
+    linkExists: Boolean(demoCargoHomeLinkTarget),
+    linkTarget: demoCargoHomeLinkTarget,
+    linkMatches:
+      Boolean(demoCargoHomeLinkTarget) &&
+      demoCargoHomeLinkTarget?.toLowerCase() === demoCargoHome.toLowerCase(),
+    shellProfile: null,
+  };
+}
+
+export async function demoMigrateCargoHome(
+  target: string,
+  createLink: boolean,
+): Promise<CargoHomeMigrationResult> {
+  await new Promise((resolve) => window.setTimeout(resolve, 1400));
+  demoCargoHome = target;
+  demoCargoHomeEnvSet = true;
+  demoCargoHomeLinkTarget = createLink ? target : null;
+  return {
+    output: `已迁移 Cargo 数据到 ${target}${createLink ? "，并创建旧路径链接" : ""}`,
+    status: await demoCargoHomeStatus(),
+  };
+}
+
+export async function demoPickCargoHomeFolder(): Promise<string> {
+  return "D:\\cargo-home";
 }
 
 const DEMO_HOST = "x86_64-pc-windows-msvc";

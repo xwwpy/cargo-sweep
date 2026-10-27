@@ -1,7 +1,9 @@
+mod cargo_home;
 mod cargo_source;
 mod rust_toolchain;
 mod scanner;
 
+use cargo_home::{CargoHomeMigrationResult, CargoHomeStatus};
 use cargo_source::{ApplySourceResult, CargoSourceStatus};
 use rust_toolchain::{
     LatestRustVersions, RustInstallationProbe, RustToolchainStatus, ToolchainOperationResult,
@@ -123,6 +125,21 @@ async fn apply_cargo_source(url: String) -> Result<ApplySourceResult, String> {
 }
 
 #[tauri::command]
+fn cargo_home_status() -> Result<CargoHomeStatus, String> {
+    cargo_home::status()
+}
+
+#[tauri::command]
+async fn migrate_cargo_home(
+    target: String,
+    create_link: bool,
+) -> Result<CargoHomeMigrationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || cargo_home::migrate(target, create_link))
+        .await
+        .map_err(|error| format!("迁移 CARGO_HOME 任务异常退出：{error}"))?
+}
+
+#[tauri::command]
 fn probe_rust_installation() -> RustInstallationProbe {
     rust_toolchain::probe()
 }
@@ -238,6 +255,8 @@ pub fn run() {
             scan_targets,
             delete_targets,
             default_scan_roots,
+            cargo_home_status,
+            migrate_cargo_home,
             detect_cargo_source,
             apply_cargo_source,
             probe_rust_installation,

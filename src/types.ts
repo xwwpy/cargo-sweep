@@ -123,3 +123,21 @@ export interface RustInstallationProbe {
   version: string | null;
   rustupPath: string | null;
 }
+
+export interface CargoHomeStatus {
+  current: string;
+  default: string;
+  source: string;
+  cargoBin: string;
+  rustupHome: string;
+  pathContainsCargoBin: boolean;
+  linkExists: boolean;
+  linkTarget: string | null;
+  linkMatches: boolean;
+  shellProfile: string | null;
+}
+
+export interface CargoHomeMigrationResult {
+  output: string;
+  status: CargoHomeStatus;
+}

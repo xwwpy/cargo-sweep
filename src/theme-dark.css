@@ -722,6 +722,113 @@ html.dark .rustup-actions .el-input__inner {
   color: #f5e6d3;
 }
 
+html.dark .cargo-home-card {
+  background: #0f1726;
+  border-color: #1f2d40;
+}
+
+html.dark .env-head h2 {
+  color: #d7e2ef;
+}
+
+html.dark .env-sub {
+  color: #7f8ea3;
+}
+
+html.dark .link-badge {
+  color: #94a3b8;
+  background: #142032;
+}
+
+html.dark .link-badge.ok {
+  color: #5eead4;
+  background: #0d2b2a;
+}
+
+html.dark .link-badge.warn {
+  color: #fdb022;
+  background: #2b1d0b;
+}
+
+html.dark .env-item {
+  background: #0b1422;
+  border-color: #1e2b3c;
+}
+
+html.dark .env-item-head code {
+  color: #5eead4;
+}
+
+html.dark .env-item-head span,
+html.dark .env-item p {
+  color: #7f8ea3;
+}
+
+html.dark .link-detail {
+  color: #94a3b8;
+  background: #0d2b2a;
+  border-color: #1f4f49;
+}
+
+html.dark .link-detail code {
+  color: #5eead4;
+}
+
+html.dark .cargo-home-footer {
+  border-top-color: #1b293d;
+}
+
+html.dark .cargo-home-footer p {
+  color: #7f8ea3;
+}
+
+html.dark .cargo-home-error {
+  color: #fdb022;
+  background: #2b1d0b;
+  border-color: #5a3a17;
+}
+
+html.dark .migration-dialog {
+  color: #a9b8c9;
+}
+
+html.dark .migration-intro code,
+html.dark .migration-hint code,
+html.dark .migration-env code {
+  color: #5eead4;
+}
+
+html.dark .migration-current {
+  background: #0b1422;
+}
+
+html.dark .migration-current code {
+  color: #d7e2ef;
+}
+
+html.dark .migration-env {
+  background: #0d2b2a;
+  border-color: #1f4f49;
+}
+
+html.dark .migration-env-title {
+  color: #5eead4;
+}
+
+html.dark .migration-env > div {
+  color: #94a3b8;
+}
+
+html.dark .migration-hint {
+  color: #7f8ea3;
+}
+
+html.dark .migration-error {
+  color: #f97066;
+  background: #2b1517;
+  border-color: #5a2627;
+}
+
 html.dark .setup-banner {
   background: #0d2b2a;
   border-color: #1f4f49;
