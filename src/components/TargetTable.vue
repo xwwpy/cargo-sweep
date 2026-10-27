@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import {
   Delete,
   DocumentCopy,
@@ -41,15 +41,70 @@ const emit = defineEmits<{
   add: [];
 }>();
 
+const PAGE_SIZE_KEY = "cargo-sweep.page-size.v1";
+const PAGE_SIZES = [5, 10, 20];
+
+function readPageSize(): number {
+  const stored = Number(localStorage.getItem(PAGE_SIZE_KEY));
+  return PAGE_SIZES.includes(stored) ? stored : 5;
+}
+
 const tableRef = ref<{ clearSelection: () => void } | null>(null);
+const currentPage = ref(1);
+const pageSize = ref(readPageSize());
 
 const localSearch = computed({
   get: () => props.search,
   set: (value: string) => emit("update:search", value),
 });
 
+const pageCount = computed(() =>
+  Math.max(1, Math.ceil(props.targets.length / pageSize.value)),
+);
+
+const pagedTargets = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value;
+  return props.targets.slice(start, start + pageSize.value);
+});
+
 const maxSize = computed(() =>
   Math.max(1, ...props.targets.map((target) => target.sizeBytes)),
+);
+
+watch(
+  () => props.targets.length,
+  () => {
+    if (currentPage.value > pageCount.value) {
+      currentPage.value = pageCount.value;
+    }
+  },
+);
+
+watch(pageSize, (value) => {
+  try {
+    localStorage.setItem(PAGE_SIZE_KEY, String(value));
+  } catch {
+    // Page size is kept for the current session.
+  }
+  currentPage.value = 1;
+});
+
+watch(
+  () => props.search,
+  () => {
+    currentPage.value = 1;
+    tableRef.value?.clearSelection();
+    emit("selection-change", []);
+  },
+);
+
+watch(
+  () => props.scanning,
+  (value, previous) => {
+    if (previous && !value) {
+      currentPage.value = 1;
+    }
+  },
 );
 
 const scanTitle = computed(() => {
@@ -176,14 +231,19 @@ defineExpose({
     <div class="table-stage" :class="{ 'is-busy': scanning || loading }">
       <el-table
         ref="tableRef"
-        :data="targets"
+        :data="pagedTargets"
         row-key="path"
         :max-height="472"
         :selectable="canSelect"
         class="target-table"
         @selection-change="handleSelection"
       >
-        <el-table-column type="selection" width="44" :selectable="canSelect" />
+        <el-table-column
+          type="selection"
+          width="44"
+          :selectable="canSelect"
+          reserve-selection
+        />
 
         <el-table-column label="项目 / 路径" min-width="250">
           <template #default="{ row }">
@@ -325,11 +385,21 @@ defineExpose({
     <footer class="table-footer">
       <span class="footer-security">
         <el-icon><Lock /></el-icon>
-        仅删除包含 Cargo.toml 的 target 目录
+        仅删除 target
       </span>
-      <span class="footer-count">
-        {{ totalTargets }} 个项目 · 显示 {{ targets.length }} 个
-      </span>
+      <div class="footer-pagination">
+        <el-pagination
+          v-if="targets.length > 0"
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="PAGE_SIZES"
+          :total="targets.length"
+          :hide-on-single-page="false"
+          size="small"
+          background
+          layout="sizes, prev, pager, next"
+        />
+      </div>
     </footer>
   </section>
 </template>
@@ -706,11 +776,33 @@ defineExpose({
 
 .table-footer {
   display: flex;
+  gap: 10px;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 17px;
+  padding: 10px 14px;
   background: #f8fafc;
   border-top: 1px solid #eaecf0;
+}
+
+.footer-pagination {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.footer-pagination :deep(.el-pagination) {
+  gap: 2px;
+  font-size: 10px;
+}
+
+.footer-pagination :deep(.el-pagination__sizes) {
+  margin-right: 2px;
+}
+
+.footer-pagination :deep(.el-pagination__sizes .el-select) {
+  width: 88px;
 }
 
 .footer-security,

@@ -25,6 +25,8 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 - 清爽路径：自动移除 Windows 规范化路径的 `\\?\` 前缀
 - Cargo 源管理：自动检测当前全局下载源，内置常见镜像并支持自定义源
 - 快速筛选：按项目名或路径实时搜索
+- 分页浏览：每页 5 / 10 / 20 项，多选状态可跨页保留
+- Rust 工具链：显示当前 rustc、Cargo、rustup 版本与活动工具链，支持一键更新
 - 三种清理方式：
   - 单条「清理」
   - 勾选多条后「删除所选」
@@ -47,6 +49,10 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 | 扫描进行中 | Cargo 下载源 |
 | --- | --- |
 | ![扫描进度](docs/scanning.png) | ![Cargo 下载源](docs/sources.png) |
+
+| Rust 工具链 | 深色工具链 |
+| --- | --- |
+| ![Rust 工具链](docs/toolchain.png) | ![深色工具链](docs/toolchain-dark.png) |
 
 > 截图使用浏览器演示模式与内置演示数据，不代表本机真实项目路径。
 
@@ -140,8 +146,8 @@ pnpm tauri build --bundles nsis
 
 ```bash
 git add .
-git commit -m "release: v0.3.1"
-git tag v0.3.1
+git commit -m "release: v0.3.2"
+git tag v0.3.2
 git push origin main --tags
 ```
 
@@ -184,6 +190,7 @@ git push origin main --tags
 5. 点击单行的「清理」，或勾选多行后点击「删除所选」，也可以直接「一键清理」。
 6. 在确认弹窗中检查目录与预计释放空间，确认后执行删除。
 7. 打开侧栏「Cargo 下载源」，检测当前源，选择镜像或自定义源后应用切换。
+8. 打开侧栏「Rust 工具链」，查看当前版本，需要时点击「一键更新」。
 
 下次执行 `cargo build` 时，Cargo 会按需重新生成 `target`，不会影响源码。
 
@@ -246,6 +253,8 @@ Error writing temporary file. Make sure your temp folder is valid.
 | `delete_targets` | 校验并删除指定 target，返回释放空间与失败列表 |
 | `detect_cargo_source` | 读取全局 Cargo 配置并解析当前下载源 |
 | `apply_cargo_source` | 备份并切换 Cargo 下载源 |
+| `detect_rust_toolchain` | 读取 rustc、Cargo、rustup 与工具链信息 |
+| `update_rust_toolchain` | 通过 rustup 更新当前工具链 |
 | `open_folder` | 在系统文件管理器中打开指定目录 |
 
 前端通过 Tauri 事件 `scan-progress` 接收扫描阶段、当前根目录和已发现数量。
@@ -267,6 +276,7 @@ cargo-sweep/
 │  │  ├─ TargetTable.vue          # 搜索、多选、打开目录与清理
 │  │  ├─ DeleteDialog.vue         # 删除确认
 │  │  ├─ CargoSourcePage.vue      # 下载源检测、切换与自定义
+│  │  ├─ RustToolchainPage.vue    # 版本展示与工具链更新
 │  │  ├─ UpdateBanner.vue         # 新版本横幅
 │  │  └─ UpdateDialog.vue         # 更新详情与下载进度
 │  ├─ lib/format.ts               # 字节、时间和路径格式化
@@ -279,6 +289,7 @@ cargo-sweep/
 ├─ src-tauri/
 │  ├─ src/scanner.rs              # 扫描、测量、校验、删除与单元测试
 │  ├─ src/cargo_source.rs         # Cargo 源检测、备份与切换
+│  ├─ src/rust_toolchain.rs       # Rust 版本检测与 rustup 更新
 │  ├─ src/lib.rs                  # Tauri 命令与插件注册
 │  ├─ tauri.conf.json             # 更新源与签名公钥
 │  └─ capabilities/default.json

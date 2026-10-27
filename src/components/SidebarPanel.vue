@@ -2,6 +2,7 @@
 import {
   Close,
   Connection,
+  Cpu,
   FolderOpened,
   Grid,
   InfoFilled,
@@ -18,14 +19,14 @@ defineProps<{
   version: string;
   updateAvailable: boolean;
   checkingUpdates: boolean;
-  activePage: "targets" | "sources";
+  activePage: "targets" | "sources" | "toolchain";
 }>();
 
 defineEmits<{
   add: [];
   remove: [root: string];
   "check-update": [];
-  navigate: [page: "targets" | "sources"];
+  navigate: [page: "targets" | "sources" | "toolchain"];
 }>();
 </script>
 
@@ -60,12 +61,17 @@ defineEmits<{
         <span class="nav-title">Cargo 下载源</span>
         <span class="nav-hint">Registry</span>
       </button>
+      <button
+        class="nav-item"
+        :class="{ active: activePage === 'toolchain' }"
+        type="button"
+        @click="$emit('navigate', 'toolchain')"
+      >
+        <span class="nav-icon"><el-icon><Cpu /></el-icon></span>
+        <span class="nav-title">Rust 工具链</span>
+        <span class="nav-hint">Toolchain</span>
+      </button>
     </nav>
-
-    <div class="intro">
-      <span class="intro-label"><i class="live-dot" /> 工作区</span>
-      <p>选择 Rust 项目所在的位置，Cargo Sweep 会替你找出所有构建缓存。</p>
-    </div>
 
     <div class="section-head">
       <span>扫描范围</span>
@@ -106,7 +112,7 @@ defineEmits<{
 
     <div class="depth-note">
       <el-icon><InfoFilled /></el-icon>
-      <span>每个目录最多向下扫描 10 层</span>
+      <span>递归 10 层</span>
     </div>
 
     <div class="sidebar-spacer" />
@@ -116,8 +122,8 @@ defineEmits<{
         <el-icon><Lock /></el-icon>
       </div>
       <div>
-        <h4>只动 target，不动源码</h4>
-        <p>每个目录都会校验父级 Cargo.toml，符号链接会被自动跳过。</p>
+        <h4>只删 target</h4>
+        <p>校验 Cargo.toml，跳过符号链接。</p>
       </div>
     </div>
 
@@ -284,47 +290,17 @@ defineEmits<{
   color: #66a99f;
 }
 
-.intro {
-  padding: 20px 8px 18px;
-  margin-top: 15px;
-  border-top: 1px solid rgba(255, 255, 255, 0.075);
-}
-
-.intro-label {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.8px;
-  color: #8b9bb0;
-  text-transform: uppercase;
-}
-
-.live-dot {
-  width: 6px;
-  height: 6px;
-  background: #2dd4bf;
-  border-radius: 50%;
-  box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.14);
-}
-
-.intro p {
-  margin: 12px 0 0;
-  font-size: 12px;
-  line-height: 1.75;
-  color: #7b8ba0;
-}
-
 .section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 8px 10px;
+  padding: 16px 8px 10px;
+  margin-top: 12px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.7px;
   color: #c9d6e5;
+  border-top: 1px solid rgba(255, 255, 255, 0.075);
 }
 
 .icon-button {

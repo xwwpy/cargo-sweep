@@ -296,10 +296,7 @@ onMounted(() => {
       <div>
         <span class="eyebrow"><i /> CARGO REGISTRY</span>
         <h1>下载源，<span>选一个更快的。</span></h1>
-        <p>
-          自动读取全局 Cargo 配置，查看当前 crates.io 下载源，并安全切换到国内镜像。
-          修改前会原样备份配置文件。
-        </p>
+        <p>读取全局 Cargo 配置，查看或切换 crates.io 下载源。</p>
       </div>
       <el-button class="refresh-button" :loading="loading" @click="refresh">
         <el-icon v-if="!loading"><Refresh /></el-icon>
@@ -365,7 +362,6 @@ onMounted(() => {
           <span class="section-kicker">MIRRORS</span>
           <h2>推荐镜像</h2>
         </div>
-        <span>选择后点击底部按钮应用</span>
       </div>
 
       <div class="source-grid">
@@ -466,8 +462,8 @@ onMounted(() => {
       <div class="config-note">
         <el-icon><InfoFilled /></el-icon>
         <p>
-          这里修改的是全局 <code>{{ cleanPath(status?.configPath ?? "") }}</code>。项目内的
-          <code>.cargo/config.toml</code> 优先级更高，可能会覆盖此设置。
+          仅修改全局 <code>{{ cleanPath(status?.configPath ?? "") }}</code>；项目内的
+          <code>.cargo/config.toml</code> 优先级更高。
         </p>
       </div>
 
@@ -857,11 +853,6 @@ onMounted(() => {
   font-size: 14px;
   font-weight: 650;
   color: #344054;
-}
-
-.source-heading > span {
-  font-size: 9px;
-  color: #98a2b3;
 }
 
 .source-grid {

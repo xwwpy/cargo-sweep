@@ -547,6 +547,159 @@ html.dark .update-note .el-icon {
   color: #5eead4;
 }
 
+/* src/components/RustToolchainPage.vue */
+html.dark .toolchain-hero h1 {
+  color: #f1f6fc;
+}
+
+html.dark .toolchain-hero h1 span {
+  color: #5eead4;
+}
+
+html.dark .toolchain-hero p {
+  color: #93a3b8;
+}
+
+html.dark .toolchain-error {
+  background: #1a1114;
+  border-color: #5a2627;
+}
+
+html.dark .toolchain-error .error-icon {
+  color: #f97066;
+  background: #2b1517;
+}
+
+html.dark .toolchain-error h3 {
+  color: #f0f5fb;
+}
+
+html.dark .toolchain-error p {
+  color: #94a3b8;
+}
+
+html.dark .toolchain-loading {
+  background: #0f1726;
+  border-color: #1f2d40;
+}
+
+html.dark .toolchain-loading .loading-mark {
+  color: #5eead4;
+  background: #0d2b2a;
+  border-color: #1f4f49;
+}
+
+html.dark .toolchain-loading h3 {
+  color: #d7e2ef;
+}
+
+html.dark .toolchain-loading p {
+  color: #7f8ea3;
+}
+
+html.dark .version-facts article {
+  background: #0f1726;
+  border-color: #1f2d40;
+}
+
+html.dark .version-facts span {
+  color: #7f8ea3;
+}
+
+html.dark .version-facts strong {
+  color: #d7e2ef;
+}
+
+html.dark .update-card {
+  background: #0f1726;
+  border-color: #1f2d40;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+}
+
+html.dark .update-card.failed {
+  border-color: #5a2627;
+}
+
+html.dark .update-icon {
+  color: #5eead4;
+  background: #0d2b2a;
+  border-color: #1f4f49;
+}
+
+html.dark .update-heading h3 {
+  color: #f0f5fb;
+}
+
+html.dark .update-heading p {
+  color: #94a3b8;
+}
+
+html.dark .updating-pill {
+  color: #5eead4;
+  background: #0d2b2a;
+}
+
+html.dark .command-line {
+  background: #0b1422;
+  border-color: #1e2b3c;
+}
+
+html.dark .command-line > span,
+html.dark .command-line code,
+html.dark .update-progress span,
+html.dark .update-hint {
+  color: #7f8ea3;
+}
+
+html.dark .toolchain-section .section-heading h2 {
+  color: #d7e2ef;
+}
+
+html.dark .toolchain-section .section-hint {
+  color: #7f8ea3;
+}
+
+html.dark .toolchain-list {
+  background: #0f1726;
+  border-color: #1f2d40;
+}
+
+html.dark .toolchain-row {
+  border-bottom-color: #1b293d;
+}
+
+html.dark .toolchain-row.active {
+  background: #0d2b2a;
+}
+
+html.dark .toolchain-dot {
+  background: #475569;
+}
+
+html.dark .toolchain-row.active .toolchain-dot {
+  background: #5eead4;
+  box-shadow: 0 0 0 3px rgba(94, 234, 212, 0.1);
+}
+
+html.dark .toolchain-name {
+  color: #a9b8c9;
+}
+
+html.dark .toolchain-row.active .toolchain-name {
+  color: #5eead4;
+}
+
+html.dark .active-label {
+  color: #5eead4;
+  background: #0d2b2a;
+}
+
+html.dark .empty-toolchains {
+  color: #7f8ea3;
+  background: #0f1726;
+  border-color: #1f2d40;
+}
+
 /* src/components/CargoSourcePage.vue */
 html.dark .source-hero h1 {
   color: #f1f6fc;

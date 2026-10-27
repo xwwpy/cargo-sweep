@@ -2,6 +2,8 @@ import type {
   ApplyCargoSourceResult,
   CargoSourceStatus,
   DeleteResult,
+  RustToolchainStatus,
+  RustToolchainUpdateResult,
   ScanResult,
   TargetInfo,
 } from "../types";
@@ -31,6 +33,9 @@ const demoTargets: TargetInfo[] = [
   target("pixel-forge", "D:\\projects\\pixel-forge", 1_390_000_000, 17_553, 27),
   target("cargo-sweep", "C:\\dev\\cargo-sweep", 686_000_000, 8_042, 1),
   target("cli-toolkit", "D:\\projects\\cli-toolkit", 372_000_000, 3_918, 74),
+  target("wasm-studio", "C:\\dev\\wasm-studio", 214_000_000, 2_840, 13),
+  target("edge-proxy", "D:\\projects\\edge-proxy", 96_000_000, 1_204, 96),
+  target("sandbox-lab", "D:\\projects\\sandbox-lab", 48_000_000, 612, 240),
 ];
 
 export const demoRoots = ["C:\\dev", "D:\\projects"];
@@ -54,7 +59,7 @@ const demoSourceStatus: CargoSourceStatus = {
   configPath: "C:\\Users\\PC\\.cargo\\config.toml",
   configDir: "C:\\Users\\PC\\.cargo",
   configExists: true,
-  cargoVersion: "cargo 1.99.1",
+  cargoVersion: "1.99.1",
   currentName: "rsproxy-sparse",
   currentIndex: "sparse+https://rsproxy.cn/index/",
   currentIsOfficial: false,
@@ -97,6 +102,50 @@ export async function demoApplyCargoSource(url: string): Promise<ApplyCargoSourc
     backupPath:
       url === OFFICIAL_INDEX ? null : "C:\\Users\\PC\\.cargo\\config.toml.cargo-sweep-backup-demo",
     status,
+  };
+}
+
+const demoToolchains = [
+  { name: "stable-x86_64-pc-windows-msvc", active: true },
+  { name: "nightly-x86_64-pc-windows-msvc", active: false },
+  { name: "1.98.0-x86_64-pc-windows-msvc", active: false },
+];
+
+function demoToolchainStatus(version: string): RustToolchainStatus {
+  return {
+    version,
+    rustcVersion: `rustc ${version} (demo build)`,
+    release: version,
+    host: "x86_64-pc-windows-msvc",
+    channel: "stable",
+    activeToolchain: "stable-x86_64-pc-windows-msvc",
+    toolchains: demoToolchains.map((toolchain) => ({ ...toolchain })),
+    cargoVersion: "1.99.1",
+    rustupVersion: "1.29.2",
+  };
+}
+
+export async function demoRustToolchainStatus(): Promise<RustToolchainStatus> {
+  await new Promise((resolve) => window.setTimeout(resolve, 420));
+  return demoToolchainStatus("1.99.1");
+}
+
+export async function demoUpdateRustToolchain(): Promise<RustToolchainUpdateResult> {
+  await new Promise((resolve) => window.setTimeout(resolve, 1800));
+  return {
+    success: true,
+    output: [
+      "info: syncing channel updates for 'stable-x86_64-pc-windows-msvc'",
+      "info: latest update on 2026-10-27, rust version 1.101.0",
+      "info: downloading component 'rustc'",
+      "info: downloading component 'cargo'",
+      "info: installing component 'rustc'",
+      "info: installing component 'cargo'",
+      "info: default toolchain set to 'stable-x86_64-pc-windows-msvc'",
+      "",
+      "  stable-x86_64-pc-windows-msvc updated - rustc 1.101.0",
+    ].join("\n"),
+    status: demoToolchainStatus("1.101.0"),
   };
 }
 

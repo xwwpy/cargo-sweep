@@ -61,3 +61,26 @@ export interface ApplyCargoSourceResult {
   backupPath: string | null;
   status: CargoSourceStatus;
 }
+
+export interface InstalledRustToolchain {
+  name: string;
+  active: boolean;
+}
+
+export interface RustToolchainStatus {
+  version: string;
+  rustcVersion: string;
+  release: string;
+  host: string | null;
+  channel: string | null;
+  activeToolchain: string | null;
+  toolchains: InstalledRustToolchain[];
+  cargoVersion: string | null;
+  rustupVersion: string | null;
+}
+
+export interface RustToolchainUpdateResult {
+  success: boolean;
+  output: string;
+  status: RustToolchainStatus;
+}

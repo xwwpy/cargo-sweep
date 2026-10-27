@@ -322,7 +322,13 @@ fn cargo_version() -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Some(
+        version
+            .strip_prefix("cargo ")
+            .unwrap_or(&version)
+            .to_string(),
+    )
 }
 
 #[cfg(test)]

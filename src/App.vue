@@ -16,6 +16,7 @@ import SummaryCards from "./components/SummaryCards.vue";
 import TargetTable from "./components/TargetTable.vue";
 import DeleteDialog from "./components/DeleteDialog.vue";
 import CargoSourcePage from "./components/CargoSourcePage.vue";
+import RustToolchainPage from "./components/RustToolchainPage.vue";
 import UpdateBanner from "./components/UpdateBanner.vue";
 import UpdateDialog from "./components/UpdateDialog.vue";
 import { useTheme, type ThemeMode } from "./composables/useTheme";
@@ -44,7 +45,15 @@ const themeLabel = computed(() => {
   return themeMode.value === "dark" ? "深色" : "浅色";
 });
 
-const activePage = ref<"targets" | "sources">("targets");
+const activePage = ref<"targets" | "sources" | "toolchain">("targets");
+const pageTitle = computed(
+  () =>
+    ({
+      targets: "空间总览",
+      sources: "Cargo 下载源",
+      toolchain: "Rust 工具链",
+    })[activePage.value],
+);
 const mainRef = ref<HTMLElement | null>(null);
 const roots = ref<string[]>([]);
 const targets = ref<TargetInfo[]>([]);
@@ -345,7 +354,11 @@ function changeTheme(command: string) {
   setThemeMode(command as ThemeMode);
 }
 
-function navigateTo(page: "targets" | "sources") {
+function navigateTo(page: "targets" | "sources" | "toolchain") {
+  if (page !== "targets") {
+    selectedRows.value = [];
+    tableRef.value?.clearSelection();
+  }
   activePage.value = page;
   requestAnimationFrame(() => mainRef.value?.scrollTo({ top: 0, behavior: "smooth" }));
 }
@@ -437,7 +450,7 @@ function uniqueRoots(list: string[]): string[] {
         <div class="breadcrumb">
           <span>工作台</span>
           <i>/</i>
-          <strong>{{ activePage === "targets" ? "空间总览" : "Cargo 下载源" }}</strong>
+          <strong>{{ pageTitle }}</strong>
         </div>
 
         <div class="topbar-actions">
@@ -549,10 +562,7 @@ function uniqueRoots(list: string[]): string[] {
         <div class="hero-copy">
           <span class="eyebrow"><i /> CARGO TARGET CLEANER</span>
           <h1>清理构建缓存，<span>让磁盘轻一点。</span></h1>
-          <p>
-            发现本地 Rust 项目中的 target 目录，按需回收被构建产物占用的空间。源码与
-            Cargo.toml 始终保持原样。
-          </p>
+          <p>扫描本地 Rust 项目的 target 目录，安全回收构建缓存。</p>
         </div>
         <div class="hero-safety">
           <span><i /> 只读扫描</span>
@@ -590,7 +600,6 @@ function uniqueRoots(list: string[]): string[] {
               <span class="title-count">{{ targets.length }}</span>
             </h2>
           </div>
-          <span class="sort-caption">按占用空间从大到小</span>
         </div>
 
         <TargetTable
@@ -615,17 +624,22 @@ function uniqueRoots(list: string[]): string[] {
         </section>
       </template>
 
-      <CargoSourcePage v-else />
+      <CargoSourcePage v-else-if="activePage === 'sources'" />
+      <RustToolchainPage v-else />
 
       <footer class="app-footer">
         <span class="footer-brand">Cargo Sweep · github.com/xwwpy/cargo-sweep</span>
         <span v-if="activePage === 'targets'" class="footer-note">
           <i />
-          删除前校验 Cargo.toml · 符号链接自动跳过
+          校验 Cargo.toml · 跳过符号链接
+        </span>
+        <span v-else-if="activePage === 'sources'" class="footer-note">
+          <i />
+          切换前自动备份 Cargo 配置
         </span>
         <span v-else class="footer-note">
           <i />
-          切换前自动备份 Cargo 配置 · 支持自定义索引
+          通过 rustup 更新活动工具链
         </span>
       </footer>
     </main>

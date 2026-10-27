@@ -1,7 +1,9 @@
 mod cargo_source;
+mod rust_toolchain;
 mod scanner;
 
 use cargo_source::{ApplySourceResult, CargoSourceStatus};
+use rust_toolchain::{RustToolchainStatus, ToolchainUpdateResult};
 use scanner::{DeleteResult, ScanProgress, ScanResult};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -115,6 +117,20 @@ async fn apply_cargo_source(url: String) -> Result<ApplySourceResult, String> {
 }
 
 #[tauri::command]
+async fn detect_rust_toolchain() -> Result<RustToolchainStatus, String> {
+    tauri::async_runtime::spawn_blocking(rust_toolchain::detect)
+        .await
+        .map_err(|error| format!("检测 Rust 工具链任务异常退出：{error}"))?
+}
+
+#[tauri::command]
+async fn update_rust_toolchain() -> Result<ToolchainUpdateResult, String> {
+    tauri::async_runtime::spawn_blocking(rust_toolchain::update)
+        .await
+        .map_err(|error| format!("更新 Rust 工具链任务异常退出：{error}"))?
+}
+
+#[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
     let folder = std::path::PathBuf::from(&path);
     if !folder.is_dir() {
@@ -159,6 +175,8 @@ pub fn run() {
             default_scan_roots,
             detect_cargo_source,
             apply_cargo_source,
+            detect_rust_toolchain,
+            update_rust_toolchain,
             open_folder
         ])
         .run(tauri::generate_context!());

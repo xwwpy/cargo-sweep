@@ -5,6 +5,8 @@ import type {
   ApplyCargoSourceResult,
   CargoSourceStatus,
   DeleteResult,
+  RustToolchainStatus,
+  RustToolchainUpdateResult,
   ScanProgress,
   ScanResult,
 } from "./types";
@@ -13,7 +15,9 @@ import {
   demoCargoSourceStatus,
   demoDelete,
   demoRoots,
+  demoRustToolchainStatus,
   demoScan,
+  demoUpdateRustToolchain,
 } from "./lib/demo";
 
 export function isTauriRuntime(): boolean {
@@ -72,6 +76,26 @@ export async function applyCargoSource(url: string): Promise<ApplyCargoSourceRes
     throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
   }
   return invoke<ApplyCargoSourceResult>("apply_cargo_source", { url });
+}
+
+export async function detectRustToolchain(): Promise<RustToolchainStatus> {
+  if (isDemoMode()) {
+    return demoRustToolchainStatus();
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<RustToolchainStatus>("detect_rust_toolchain");
+}
+
+export async function updateRustToolchain(): Promise<RustToolchainUpdateResult> {
+  if (isDemoMode()) {
+    return demoUpdateRustToolchain();
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<RustToolchainUpdateResult>("update_rust_toolchain");
 }
 
 export async function openFolder(path: string): Promise<void> {
