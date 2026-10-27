@@ -121,7 +121,8 @@ pnpm tauri build --bundles nsis
 
 ### 发布新版本
 
-1. 同步修改 `package.json`、`src-tauri/Cargo.toml` 与 `src-tauri/tauri.conf.json` 的版本号。
+1. 同步修改 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 与
+   `src/lib/version.ts` 的版本号。
 2. 提交代码并推送标签：
 
 ```bash
