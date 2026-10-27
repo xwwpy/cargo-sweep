@@ -8,6 +8,9 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 生成的 `target` 文件夹，统计其中的文件数量与真实文件大小，并支持单条删除、多选删除和
 一键清理全部。
 
+**[下载最新版本](https://github.com/xwwpy/cargo-sweep/releases/latest)** ·
+[查看 Release](https://github.com/xwwpy/cargo-sweep/releases)
+
 ![Cargo Sweep 概览](docs/overview.png)
 
 ## 功能
@@ -227,6 +230,7 @@ cargo-sweep/
 │  └─ styles.css                  # Ink & Mint 主题
 ├─ packaging/                     # 发布包说明与启动脚本模板
 ├─ scripts/package-release.ps1    # 本地 / CI 发布包打包
+├─ scripts/fix-updater-notes.mjs  # 修正更新清单的 UTF-8 发布说明
 ├─ src-tauri/
 │  ├─ src/scanner.rs              # 扫描、测量、校验、删除与单元测试
 │  ├─ src/lib.rs                  # Tauri 命令与插件注册

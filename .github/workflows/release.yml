@@ -84,3 +84,9 @@ jobs:
             gh release upload $tag $_.FullName --clobber
           }
           gh release upload $tag release/SHA256SUMS.txt --clobber
+
+      - name: Fix updater manifest encoding
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/fix-updater-notes.mjs
