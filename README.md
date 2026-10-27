@@ -20,6 +20,7 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 - 自动发现：识别目录名严格为 `target` 且父目录存在 `Cargo.toml` 的 Cargo 构建目录
 - 可视化统计：可回收空间、文件总数、target 数量、上次扫描耗时
 - 按项目查看：项目名、完整 target 路径、占用空间、文件数、最近构建时间
+- 一键打开：在文件资源管理器中直接打开选中的 target 目录
 - 快速筛选：按项目名或路径实时搜索
 - 三种清理方式：
   - 单条「清理」
@@ -130,8 +131,8 @@ pnpm tauri build --bundles nsis
 
 ```bash
 git add .
-git commit -m "release: v0.2.0"
-git tag v0.2.0
+git commit -m "release: v0.2.1"
+git tag v0.2.1
 git push origin main --tags
 ```
 
@@ -145,8 +146,9 @@ git push origin main --tags
 1. 首次启动时会自动添加常见目录，例如“文档”“桌面”及 `source/repos`、`projects` 等。
 2. 点击左侧「扫描范围」旁的 `+`，或右上角「添加目录」，选择 Rust 项目所在目录。
 3. 扫描完成后，在列表中查看各 `target` 的占用空间。
-4. 点击单行的「清理」，或勾选多行后点击「删除所选」，也可以直接「一键清理」。
-5. 在确认弹窗中检查目录与预计释放空间，确认后执行删除。
+4. 点击项目行右侧的目录图标，可以直接打开对应的 target 目录。
+5. 点击单行的「清理」，或勾选多行后点击「删除所选」，也可以直接「一键清理」。
+6. 在确认弹窗中检查目录与预计释放空间，确认后执行删除。
 
 下次执行 `cargo build` 时，Cargo 会按需重新生成 `target`，不会影响源码。
 
@@ -207,6 +209,7 @@ Error writing temporary file. Make sure your temp folder is valid.
 | `default_scan_roots` | 返回首次启动时建议的扫描目录 |
 | `scan_targets` | 扫描根目录，返回 target 列表、文件数、大小和耗时，并发送进度事件 |
 | `delete_targets` | 校验并删除指定 target，返回释放空间与失败列表 |
+| `open_folder` | 在系统文件管理器中打开指定目录 |
 
 前端通过 Tauri 事件 `scan-progress` 接收扫描阶段、当前根目录和已发现数量。
 

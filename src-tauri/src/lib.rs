@@ -100,6 +100,29 @@ fn default_scan_roots() -> Vec<String> {
     scanner::default_scan_roots()
 }
 
+#[tauri::command]
+fn open_folder(path: String) -> Result<(), String> {
+    let folder = std::path::PathBuf::from(&path);
+    if !folder.is_dir() {
+        return Err("目录不存在或无法访问。".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("explorer.exe")
+        .arg(&folder)
+        .spawn();
+
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(&folder).spawn();
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open").arg(&folder).spawn();
+
+    result
+        .map(|_| ())
+        .map_err(|error| format!("无法打开目录：{error}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_panic_hook();
@@ -119,7 +142,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_targets,
             delete_targets,
-            default_scan_roots
+            default_scan_roots,
+            open_folder
         ])
         .run(tauri::generate_context!());
 

@@ -42,6 +42,16 @@ export async function deleteTargets(paths: string[]): Promise<DeleteResult> {
   return invoke<DeleteResult>("delete_targets", { paths });
 }
 
+export async function openFolder(path: string): Promise<void> {
+  if (isDemoMode()) {
+    throw new Error("演示模式无法打开本地目录");
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  await invoke("open_folder", { path });
+}
+
 export async function pickFolders(): Promise<string[]> {
   if (!isTauriRuntime()) {
     return [];

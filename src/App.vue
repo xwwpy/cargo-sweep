@@ -15,6 +15,7 @@ import {
   errorMessage,
   isDemoMode,
   listenToScanProgress,
+  openFolder,
   pickFolders,
   scanTargets,
 } from "./api";
@@ -323,6 +324,14 @@ function handleSelection(rows: TargetInfo[]) {
   selectedRows.value = rows;
 }
 
+async function openTargetLocation(target: TargetInfo) {
+  try {
+    await openFolder(target.path);
+  } catch (error) {
+    ElMessage.error(`打开目录失败：${errorMessage(error)}`);
+  }
+}
+
 async function manualCheckUpdate() {
   if (hasUpdate.value) {
     updateDialogVisible.value = true;
@@ -512,6 +521,7 @@ function uniqueRoots(list: string[]): string[] {
           @request-delete="requestDelete"
           @request-delete-selected="requestDeleteSelected"
           @request-delete-all="requestDeleteAll"
+          @open-location="openTargetLocation"
           @add="addRoots"
         />
       </section>

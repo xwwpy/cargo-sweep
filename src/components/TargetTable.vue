@@ -36,6 +36,7 @@ const emit = defineEmits<{
   "request-delete": [rows: TargetInfo[]];
   "request-delete-selected": [];
   "request-delete-all": [];
+  "open-location": [target: TargetInfo];
   add: [];
 }>();
 
@@ -238,17 +239,31 @@ defineExpose({
           </template>
         </el-table-column>
 
-        <el-table-column label="" width="72" align="right">
+        <el-table-column label="操作" width="96" align="right">
           <template #default="{ row }">
-            <el-button
-              class="row-delete"
-              link
-              type="danger"
-              :disabled="scanning || deleting"
-              @click.stop="requestDelete(row)"
-            >
-              清理
-            </el-button>
+            <div class="row-actions">
+              <el-tooltip content="打开 target 目录" placement="top" :show-after="350">
+                <el-button
+                  class="row-open"
+                  text
+                  circle
+                  :disabled="scanning || deleting"
+                  aria-label="打开 target 目录"
+                  @click.stop="$emit('open-location', row)"
+                >
+                  <el-icon><FolderOpened /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-button
+                class="row-delete"
+                link
+                type="danger"
+                :disabled="scanning || deleting"
+                @click.stop="requestDelete(row)"
+              >
+                清理
+              </el-button>
+            </div>
           </template>
         </el-table-column>
 
@@ -655,16 +670,37 @@ defineExpose({
   color: #667085;
 }
 
+.row-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.row-open {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 12px;
+  color: #98a2b3;
+  border-radius: 7px;
+}
+
+.row-open:not(.is-disabled):hover {
+  color: #0f766e;
+  background: #edf9f7;
+}
+
 .row-delete {
   height: 26px;
-  padding: 0 8px;
+  padding: 0 6px;
   font-size: 10.5px;
   font-weight: 600;
   border-radius: 7px;
 }
 
 .row-delete:not(.is-disabled):hover {
-  background: rgba(15, 118, 110, 0.07);
+  background: rgba(217, 45, 32, 0.06);
 }
 
 .table-footer {
