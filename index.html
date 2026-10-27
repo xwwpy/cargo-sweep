@@ -12,6 +12,23 @@
     <title>Cargo Sweep · Rust Target 清理器</title>
   </head>
   <body>
+    <script>
+      (function () {
+        try {
+          var mode = localStorage.getItem("cargo-sweep.theme") || "system";
+          var dark =
+            mode === "dark" ||
+            (mode !== "light" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) {
+            document.documentElement.classList.add("dark");
+          }
+          document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        } catch (error) {
+          /* Theme defaults to light when storage is unavailable. */
+        }
+      })();
+    </script>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

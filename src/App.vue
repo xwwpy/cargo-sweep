@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { ElMessage } from "element-plus";
-import { Download, Loading, Plus, Refresh } from "@element-plus/icons-vue";
+import {
+  Check,
+  Download,
+  Loading,
+  Monitor,
+  Moon,
+  Plus,
+  Refresh,
+  Sunny,
+} from "@element-plus/icons-vue";
 import SidebarPanel from "./components/SidebarPanel.vue";
 import SummaryCards from "./components/SummaryCards.vue";
 import TargetTable from "./components/TargetTable.vue";
@@ -9,6 +18,7 @@ import DeleteDialog from "./components/DeleteDialog.vue";
 import CargoSourcePage from "./components/CargoSourcePage.vue";
 import UpdateBanner from "./components/UpdateBanner.vue";
 import UpdateDialog from "./components/UpdateDialog.vue";
+import { useTheme, type ThemeMode } from "./composables/useTheme";
 import { useUpdater } from "./composables/useUpdater";
 import {
   defaultScanRoots,
@@ -25,6 +35,14 @@ import { APP_VERSION } from "./lib/version";
 import type { ScanProgress, TargetInfo } from "./types";
 
 const STORAGE_KEY = "cargo-sweep.scan-roots.v1";
+
+const { mode: themeMode, isDark, setMode: setThemeMode } = useTheme();
+const themeLabel = computed(() => {
+  if (themeMode.value === "system") {
+    return "跟随系统";
+  }
+  return themeMode.value === "dark" ? "深色" : "浅色";
+});
 
 const activePage = ref<"targets" | "sources">("targets");
 const mainRef = ref<HTMLElement | null>(null);
@@ -323,6 +341,10 @@ async function confirmDelete() {
   }
 }
 
+function changeTheme(command: string) {
+  setThemeMode(command as ThemeMode);
+}
+
 function navigateTo(page: "targets" | "sources") {
   activePage.value = page;
   requestAnimationFrame(() => mainRef.value?.scrollTo({ top: 0, behavior: "smooth" }));
@@ -423,6 +445,59 @@ function uniqueRoots(list: string[]): string[] {
             <i class="sync-dot" />
             {{ syncLabel }}
           </span>
+
+          <el-dropdown
+            class="theme-dropdown"
+            trigger="click"
+            placement="bottom-end"
+            @command="changeTheme"
+          >
+            <button
+              class="theme-toggle"
+              type="button"
+              :title="`主题：${themeLabel}`"
+              :aria-label="`切换主题，当前${themeLabel}`"
+            >
+              <el-icon>
+                <Moon v-if="isDark" />
+                <Sunny v-else />
+              </el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu class="theme-menu">
+                <el-dropdown-item
+                  command="light"
+                  :class="{ 'is-active': themeMode === 'light' }"
+                >
+                  <el-icon><Sunny /></el-icon>
+                  <span>浅色</span>
+                  <el-icon v-if="themeMode === 'light'" class="theme-check">
+                    <Check />
+                  </el-icon>
+                </el-dropdown-item>
+                <el-dropdown-item
+                  command="dark"
+                  :class="{ 'is-active': themeMode === 'dark' }"
+                >
+                  <el-icon><Moon /></el-icon>
+                  <span>深色</span>
+                  <el-icon v-if="themeMode === 'dark'" class="theme-check">
+                    <Check />
+                  </el-icon>
+                </el-dropdown-item>
+                <el-dropdown-item
+                  command="system"
+                  :class="{ 'is-active': themeMode === 'system' }"
+                >
+                  <el-icon><Monitor /></el-icon>
+                  <span>跟随系统</span>
+                  <el-icon v-if="themeMode === 'system'" class="theme-check">
+                    <Check />
+                  </el-icon>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
 
           <el-tooltip
             :content="hasUpdate ? `发现新版本 v${availableUpdate?.version}` : '检查更新'"
@@ -625,6 +700,34 @@ function uniqueRoots(list: string[]): string[] {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.theme-dropdown {
+  line-height: 0;
+}
+
+.theme-toggle {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  font-size: 12px;
+  color: #667085;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  transition:
+    color 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease;
+  place-items: center;
+}
+
+.theme-toggle:hover {
+  color: #0f766e;
+  background: #fff;
+  border-color: #a7e5da;
 }
 
 .sync-state {

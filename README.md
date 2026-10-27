@@ -16,6 +16,7 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 ## 功能
 
 - **Ink & Mint** 界面：深墨色侧栏、薄荷绿强调色与 Manrope 数字字体
+- 主题切换：浅色、深色与跟随系统，选择会自动保存
 - 多根目录扫描：自由添加 / 移除项目目录，每个根目录最多递归 10 层
 - 自动发现：识别目录名严格为 `target` 且父目录存在 `Cargo.toml` 的 Cargo 构建目录
 - 可视化统计：可回收空间、文件总数、target 数量、上次扫描耗时
@@ -34,6 +35,10 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 - **GitHub Releases 自动更新**：启动后台检查、手动检查、下载进度与自动重启
 
 ## 界面
+
+| 浅色主题 | 深色主题 |
+| --- | --- |
+| ![浅色主题](docs/overview.png) | ![深色主题](docs/dark.png) |
 
 | 清理确认 | 自动更新 |
 | --- | --- |
@@ -135,8 +140,8 @@ pnpm tauri build --bundles nsis
 
 ```bash
 git add .
-git commit -m "release: v0.3.0"
-git tag v0.3.0
+git commit -m "release: v0.3.1"
+git tag v0.3.1
 git push origin main --tags
 ```
 
@@ -169,6 +174,8 @@ git push origin main --tags
 > 配置，它可能会覆盖这里的选择。
 
 ## 使用方式
+
+顶栏右侧的主题按钮支持「浅色 / 深色 / 跟随系统」，选择会自动保存，下次启动继续使用。
 
 1. 首次启动时会自动添加常见目录，例如“文档”“桌面”及 `source/repos`、`projects` 等。
 2. 点击左侧「扫描范围」旁的 `+`，或右上角「添加目录」，选择 Rust 项目所在目录。
@@ -252,6 +259,7 @@ cargo-sweep/
 ├─ src/
 │  ├─ App.vue                     # 页面状态、扫描、清理与更新入口
 │  ├─ api.ts                      # Tauri invoke / 事件 / 目录选择封装
+│  ├─ composables/useTheme.ts     # 主题状态、系统跟随与本地持久化
 │  ├─ composables/useUpdater.ts   # 检查、下载、安装与重启
 │  ├─ components/
 │  │  ├─ SidebarPanel.vue         # 页面导航、扫描范围与更新入口
@@ -262,6 +270,7 @@ cargo-sweep/
 │  │  ├─ UpdateBanner.vue         # 新版本横幅
 │  │  └─ UpdateDialog.vue         # 更新详情与下载进度
 │  ├─ lib/format.ts               # 字节、时间和路径格式化
+│  ├─ theme-dark.css              # 深色主题覆盖样式
 │  └─ styles.css                  # Ink & Mint 主题
 ├─ packaging/                     # 发布包说明与启动脚本模板
 ├─ scripts/package-release.ps1    # 本地 / CI 发布包打包

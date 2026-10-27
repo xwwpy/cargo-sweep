@@ -1,0 +1,779 @@
+/* Dark theme overrides. Loaded after component styles. */
+
+/* src/App.vue */
+html.dark .app-shell {
+  background:
+    radial-gradient(circle at 88% -10%, rgba(45, 212, 191, 0.09), transparent 34%),
+    radial-gradient(circle at 28% 112%, rgba(15, 118, 110, 0.08), transparent 36%),
+    #070d18;
+}
+
+html.dark .breadcrumb {
+  color: #7f8fa5;
+}
+
+html.dark .breadcrumb i {
+  color: #3d4d62;
+}
+
+html.dark .breadcrumb strong {
+  color: #d6e1ee;
+}
+
+html.dark .sync-state {
+  color: #94a3b8;
+  background: rgba(14, 25, 40, 0.8);
+  border-color: #1e2b3c;
+}
+
+html.dark .version-chip {
+  color: #a9b8c9;
+  background: #0f1a2a;
+  border-color: #223047;
+}
+
+html.dark .version-chip:hover:not(:disabled) {
+  color: #5eead4;
+  background: #142236;
+  border-color: #2b5a54;
+}
+
+html.dark .version-chip.available {
+  color: #5eead4;
+  background: #0d2b2a;
+  border-color: #1f4f49;
+}
+
+html.dark .add-folder-button {
+  color: #cbd5e1;
+  background: #111d2d;
+  border-color: #243244;
+}
+
+html.dark .add-folder-button:hover {
+  color: #5eead4;
+  background: #152236;
+  border-color: #2b5a54;
+}
+
+html.dark .theme-toggle {
+  color: #fbbf24;
+  background: #0f1a2a;
+  border-color: #223047;
+}
+
+html.dark .theme-toggle:hover {
+  color: #fde68a;
+  background: #17243a;
+  border-color: #3a4b63;
+}
+
+html.dark .eyebrow {
+  color: #5eead4;
+}
+
+html.dark .eyebrow i {
+  background: #2dd4bf;
+}
+
+html.dark .hero h1 {
+  color: #f1f6fc;
+}
+
+html.dark .hero h1 span {
+  color: #5eead4;
+}
+
+html.dark .hero p {
+  color: #93a3b8;
+}
+
+html.dark .hero-safety {
+  color: #7f8ea3;
+}
+
+html.dark .hero-safety i {
+  background: #2dd4bf;
+}
+
+html.dark .section-kicker {
+  color: #5f9f96;
+}
+
+html.dark .section-title h2 {
+  color: #d7e2ef;
+}
+
+html.dark .title-count {
+  color: #5eead4;
+  background: #0f2f2c;
+}
+
+html.dark .sort-caption {
+  color: #7f8ea3;
+}
+
+html.dark .app-footer {
+  color: #64748b;
+}
+
+html.dark .footer-note i {
+  background: #4b5b70;
+}
+
+/* src/components/SummaryCards.vue */
+html.dark .stat-card {
+  background: #0f1726;
+  border-color: #1f2d40;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 14px 36px rgba(0, 0, 0, 0.24);
+}
+
+html.dark .stat-primary {
+  background:
+    radial-gradient(circle at 14% 5%, rgba(94, 234, 212, 0.18), transparent 38%),
+    linear-gradient(135deg, #0b4f4a 0%, #0a3d3a 48%, #062b29 100%);
+  border-color: rgba(45, 212, 191, 0.22);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.09) inset,
+    0 18px 44px rgba(0, 0, 0, 0.32);
+}
+
+html.dark .stat-label {
+  color: #94a3b8;
+}
+
+html.dark .stat-icon.neutral {
+  color: #7dd3c7;
+  background: #0b1422;
+  border-color: #1e2b3c;
+}
+
+html.dark .secondary-amount {
+  color: #f0f5fb;
+}
+
+html.dark .secondary-amount span,
+html.dark .foot-muted {
+  color: #7f8ea3;
+}
+
+html.dark .accent-line {
+  background: rgba(45, 212, 191, 0.035);
+  border-color: rgba(94, 234, 212, 0.06);
+}
+
+/* src/components/TargetTable.vue */
+html.dark .targets-card {
+  background: #0f1726;
+  border-color: #1f2d40;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 20px 48px rgba(0, 0, 0, 0.26);
+}
+
+html.dark .toolbar {
+  background: #0b1422;
+  border-bottom-color: #1e2b3c;
+}
+
+html.dark .search-field .el-input__wrapper {
+  background: #0e1928;
+  box-shadow: 0 0 0 1px #243244 inset;
+}
+
+html.dark .search-field .el-input__wrapper.is-focus {
+  background: #0e1928;
+  box-shadow:
+    0 0 0 1px #2dd4bf inset,
+    0 0 0 3px rgba(45, 212, 191, 0.09);
+}
+
+html.dark .search-field .el-input__inner {
+  color: #d9e4f0;
+}
+
+html.dark .search-field .el-input__inner::placeholder,
+html.dark .search-field .el-input__prefix {
+  color: #64748b;
+}
+
+html.dark .selection-pill {
+  color: #a9d8d2;
+  background: #0d2b2a;
+  border-color: #1f4f49;
+}
+
+html.dark .selection-count {
+  color: #05231f;
+  background: #5eead4;
+}
+
+html.dark .selection-size {
+  color: #5eead4;
+}
+
+html.dark .selection-pill i {
+  background: #3d6f69;
+}
+
+html.dark .clean-all-button {
+  color: #cbd5e1;
+  background: #111d2d;
+  border-color: #243244;
+}
+
+html.dark .clean-all-button:hover:not(:disabled) {
+  color: #5eead4;
+  background: #142533;
+  border-color: #2b5a54;
+}
+
+html.dark .target-table {
+  --el-table-header-bg-color: #0b1422;
+  --el-table-tr-bg-color: transparent;
+  --el-table-row-hover-bg-color: #132033;
+  --el-table-border-color: transparent;
+  --el-table-header-text-color: #7f8ea3;
+  --el-table-text-color: #d5e1ee;
+  --el-table-bg-color: transparent;
+  --el-table-fixed-box-shadow: none;
+}
+
+html.dark .target-table th.el-table__cell {
+  background: #0b1422;
+  border-bottom-color: #1e2b3c;
+}
+
+html.dark .target-table td.el-table__cell {
+  border-bottom-color: #172335;
+}
+
+html.dark .target-table .el-table__row.current-row > td.el-table__cell,
+html.dark .target-table .el-table__row:hover > td.el-table__cell {
+  background: #132033;
+}
+
+html.dark .target-table .el-checkbox__inner {
+  background: #0b1422;
+  border-color: #334155;
+}
+
+html.dark .target-table .el-checkbox__input.is-checked .el-checkbox__inner,
+html.dark .target-table .el-checkbox__input.is-indeterminate .el-checkbox__inner {
+  background: #14b8a6;
+  border-color: #14b8a6;
+}
+
+html.dark .target-glyph {
+  background:
+    linear-gradient(140deg, rgba(255, 255, 255, 0.04), transparent),
+    #0d2b2a;
+  border-color: #1f4f49;
+}
+
+html.dark .target-glyph::before {
+  border-color: #5eead4;
+  box-shadow: 0 0 0 3px rgba(94, 234, 212, 0.09);
+}
+
+html.dark .target-glyph::after {
+  background: #5eead4;
+}
+
+html.dark .project-name,
+html.dark .size-value {
+  color: #f0f5fb;
+}
+
+html.dark .project-path,
+html.dark .size-unit,
+html.dark .muted-number,
+html.dark .muted-time,
+html.dark .footer-security,
+html.dark .footer-count {
+  color: #7f8ea3;
+}
+
+html.dark .project-path:hover {
+  color: #5eead4;
+}
+
+html.dark .size-track {
+  background: #1b293d;
+}
+
+html.dark .row-open {
+  color: #7f8ea3;
+}
+
+html.dark .row-open:not(.is-disabled):hover {
+  color: #5eead4;
+  background: #132533;
+}
+
+html.dark .row-delete:not(.is-disabled):hover {
+  background: rgba(249, 112, 102, 0.1);
+}
+
+html.dark .table-footer {
+  background: #0b1422;
+  border-top-color: #1e2b3c;
+}
+
+html.dark .empty-symbol {
+  background: #0b1422;
+  border-color: #1e2b3c;
+}
+
+html.dark .empty-state h3,
+html.dark .scan-overlay h3 {
+  color: #eaf2fb;
+}
+
+html.dark .empty-state p,
+html.dark .scan-overlay p {
+  color: #94a3b8;
+}
+
+html.dark .empty-core,
+html.dark .scan-core {
+  background: #5eead4;
+  box-shadow: 0 0 0 4px rgba(94, 234, 212, 0.1);
+}
+
+html.dark .scan-overlay {
+  background: rgba(7, 13, 24, 0.9);
+}
+
+html.dark .scan-progress .el-progress-bar__outer {
+  background: #1b293d;
+}
+
+html.dark .scan-found {
+  color: #5eead4;
+  background: #0d2b2a;
+}
+
+/* src/components/DeleteDialog.vue */
+html.dark .dialog-close {
+  color: #94a3b8;
+  background: #111d2d;
+  border-color: #243244;
+}
+
+html.dark .dialog-close:hover:not(:disabled) {
+  color: #e2e8f0;
+  background: #17243a;
+}
+
+html.dark .warning-mark {
+  color: #f97066;
+  background: linear-gradient(145deg, #2b1517, #3b1718);
+  border-color: #5a2627;
+}
+
+html.dark .warning-ring {
+  border-color: rgba(249, 112, 102, 0.14);
+}
+
+html.dark .dialog-body h2 {
+  color: #f0f5fb;
+}
+
+html.dark .dialog-lead {
+  color: #94a3b8;
+}
+
+html.dark .delete-summary {
+  background: #0b1422;
+  border-color: #1e2b3c;
+}
+
+html.dark .summary-label {
+  color: #7f8ea3;
+}
+
+html.dark .summary-block strong {
+  color: #f0f5fb;
+}
+
+html.dark .summary-divider {
+  background: #1e2b3c;
+}
+
+html.dark .target-preview {
+  border-color: #1e2b3c;
+}
+
+html.dark .preview-name {
+  color: #d5e1ee;
+}
+
+html.dark .preview-path,
+html.dark .preview-more {
+  color: #7f8ea3;
+}
+
+html.dark .preview-size {
+  color: #5eead4;
+}
+
+html.dark .safety-note {
+  color: #a9b8c9;
+  background: #0d2b2a;
+  border-color: #1f4f49;
+}
+
+html.dark .safety-note .el-icon {
+  color: #5eead4;
+}
+
+/* src/components/UpdateBanner.vue */
+html.dark .update-banner {
+  background:
+    radial-gradient(circle at 82% 0%, rgba(94, 234, 212, 0.12), transparent 35%),
+    linear-gradient(100deg, #0c211f 0%, #0e2926 58%, #0c211f 100%);
+  border-color: #1f4f49;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.26);
+}
+
+html.dark .update-banner::after {
+  border-color: rgba(94, 234, 212, 0.08);
+}
+
+html.dark .update-icon {
+  color: #5eead4;
+  background: rgba(15, 43, 41, 0.8);
+  border-color: #235a54;
+}
+
+html.dark .update-copy strong {
+  color: #b8f5ec;
+}
+
+html.dark .update-copy span {
+  color: #7fa9a1;
+}
+
+html.dark .update-action {
+  color: #5eead4;
+  background: #12302d;
+  border-color: #235a54;
+}
+
+html.dark .update-action:hover {
+  background: #173b37;
+  border-color: #2f726a;
+}
+
+html.dark .update-close {
+  color: #6f918b;
+}
+
+html.dark .update-close:hover {
+  color: #b8f5ec;
+  background: rgba(45, 212, 191, 0.1);
+}
+
+/* src/components/UpdateDialog.vue */
+html.dark .dialog-close {
+  color: #94a3b8;
+  background: #111d2d;
+  border-color: #243244;
+}
+
+html.dark .dialog-close:hover:not(:disabled) {
+  color: #e2e8f0;
+  background: #17243a;
+}
+
+html.dark .eyebrow {
+  color: #5eead4;
+}
+
+html.dark .update-body h2 {
+  color: #f0f5fb;
+}
+
+html.dark .lead {
+  color: #94a3b8;
+}
+
+html.dark .version-track {
+  background: #0b1422;
+  border-color: #1e2b3c;
+}
+
+html.dark .version-block span,
+html.dark .release-date,
+html.dark .notes-hint,
+html.dark .progress-size,
+html.dark .progress-note {
+  color: #7f8ea3;
+}
+
+html.dark .version-block strong {
+  color: #cbd5e1;
+}
+
+html.dark .version-block.next strong {
+  color: #5eead4;
+}
+
+html.dark .version-arrow {
+  color: #3e4c60;
+}
+
+html.dark .notes-label,
+html.dark .progress-head {
+  color: #cbd5e1;
+}
+
+html.dark .release-notes {
+  color: #a9b8c9;
+  background: #0b1422;
+  border-color: #1e2b3c;
+}
+
+html.dark .update-note {
+  color: #a9b8c9;
+  background: #0d2b2a;
+  border-color: #1f4f49;
+}
+
+html.dark .update-note .el-icon {
+  color: #5eead4;
+}
+
+/* src/components/CargoSourcePage.vue */
+html.dark .source-hero h1 {
+  color: #f1f6fc;
+}
+
+html.dark .source-hero h1 span {
+  color: #5eead4;
+}
+
+html.dark .source-hero p {
+  color: #93a3b8;
+}
+
+html.dark .eyebrow {
+  color: #5eead4;
+}
+
+html.dark .source-error {
+  background: #1a1114;
+  border-color: #5a2627;
+}
+
+html.dark .error-icon {
+  color: #f97066;
+  background: #2b1517;
+}
+
+html.dark .source-error h3 {
+  color: #f0f5fb;
+}
+
+html.dark .source-error p {
+  color: #94a3b8;
+}
+
+html.dark .source-loading {
+  background: #0f1726;
+  border-color: #1f2d40;
+}
+
+html.dark .loading-ring {
+  border-color: #235a54;
+}
+
+html.dark .loading-core {
+  background: #5eead4;
+  box-shadow: 0 0 0 5px rgba(94, 234, 212, 0.1);
+}
+
+html.dark .source-loading h3 {
+  color: #d7e2ef;
+}
+
+html.dark .source-loading p {
+  color: #7f8ea3;
+}
+
+html.dark .config-warning {
+  color: #fdb022;
+  background: #2b1d0b;
+  border-color: #5a3a17;
+}
+
+html.dark .backup-note {
+  color: #a9b8c9;
+  background: #0d2b2a;
+  border-color: #1f4f49;
+}
+
+html.dark .backup-note .el-icon,
+html.dark .backup-note code {
+  color: #5eead4;
+}
+
+html.dark .source-heading h2 {
+  color: #d7e2ef;
+}
+
+html.dark .source-heading > span,
+html.dark .section-kicker {
+  color: #7f8ea3;
+}
+
+html.dark .source-card {
+  background: #0f1726;
+  border-color: #1f2d40;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 1px 0 rgba(0, 0, 0, 0.12);
+}
+
+html.dark .source-card:hover {
+  border-color: #2b5a54;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+}
+
+html.dark .source-card.selected {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(45, 212, 191, 0.12), transparent 38%),
+    #0f1726;
+  border-color: #2dd4bf;
+  box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.08);
+}
+
+html.dark .source-card.current {
+  border-color: #2f726a;
+}
+
+html.dark .source-name {
+  color: #f0f5fb;
+}
+
+html.dark .source-provider,
+html.dark .source-card p,
+html.dark .source-card code {
+  color: #7f8ea3;
+}
+
+html.dark .source-badge {
+  color: #5eead4;
+  background: #0d2b2a;
+}
+
+html.dark .source-badge.custom {
+  color: #c4b5fd;
+  background: #1e1b3a;
+}
+
+html.dark .card-footer {
+  border-top-color: #1e2b3c;
+}
+
+html.dark .current-label,
+html.dark .select-label {
+  color: #5eead4;
+}
+
+html.dark .select-label {
+  color: #5d6b7d;
+}
+
+html.dark .remove-custom {
+  color: #5d6b7d;
+}
+
+html.dark .remove-custom:hover {
+  color: #f97066;
+  background: #2b1517;
+}
+
+html.dark .add-card {
+  background: #0b1422;
+  border-color: #243244;
+}
+
+html.dark .add-card:hover {
+  border-color: #334155;
+}
+
+html.dark .add-icon {
+  color: #5eead4;
+  background: #0d2b2a;
+}
+
+html.dark .add-card .el-input__wrapper {
+  background: #0e1928;
+  box-shadow: 0 0 0 1px #243244 inset;
+}
+
+html.dark .add-card .el-input__inner {
+  color: #e6edf6;
+}
+
+html.dark .add-card .el-input__inner::placeholder {
+  color: #64748b;
+}
+
+html.dark .apply-panel {
+  background: rgba(15, 23, 38, 0.94);
+  border-color: #243244;
+  box-shadow:
+    0 16px 42px rgba(0, 0, 0, 0.42),
+    0 0 0 1px rgba(45, 212, 191, 0.03);
+}
+
+html.dark .apply-label,
+html.dark .apply-copy p,
+html.dark .backup-hint {
+  color: #7f8ea3;
+}
+
+html.dark .apply-copy strong {
+  color: #f0f5fb;
+}
+
+html.dark .config-note {
+  color: #94a3b8;
+  background: #0b1422;
+  border-color: #1e2b3c;
+}
+
+html.dark .config-note .el-icon {
+  color: #64748b;
+}
+
+html.dark .config-note code {
+  color: #cbd5e1;
+}
+
+html.dark .detected-section h2 {
+  color: #d7e2ef;
+}
+
+html.dark .detected-list > div {
+  background: #0f1726;
+  border-color: #1f2d40;
+}
+
+html.dark .detected-list span {
+  color: #cbd5e1;
+}
+
+html.dark .detected-list code {
+  color: #7f8ea3;
+}
+
+html.dark .detected-list em {
+  color: #5eead4;
+  background: #0d2b2a;
+}
