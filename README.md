@@ -42,7 +42,7 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 | --- | --- | --- |
 | Windows 10 / 11 x64 | NSIS 安装包、免安装版 | 支持 |
 | macOS 10.15+（Intel / Apple Silicon） | 通用 DMG | 支持 |
-| Linux x86_64 | DEB、AppImage | AppImage 支持；DEB 建议下载新包 |
+| Linux x86_64 | DEB、AppImage | 支持 |
 
 Linux DEB 使用 Ubuntu 24.04 的 WebKitGTK 4.1 构建，适用于 Ubuntu 24.04+ 及兼容发行版；
 其他发行版可以直接使用 AppImage。
@@ -127,7 +127,7 @@ macOS 通用包（Intel + Apple Silicon）：
 
 ```bash
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
-pnpm tauri build --target universal-apple-darwin --bundles dmg
+pnpm tauri build --target universal-apple-darwin --bundles app,dmg
 ```
 
 产物位于 `src-tauri/target/universal-apple-darwin/release/bundle/dmg/`。
@@ -150,8 +150,8 @@ export TAURI_SIGNING_PRIVATE_KEY="$(cat .secrets/cargo-sweep-updater.key)"
 pnpm tauri build --bundles deb,appimage
 ```
 
-构建后会生成 NSIS `.sig`、macOS `.app.tar.gz.sig` 与 Linux `.AppImage.tar.gz.sig`。
-更新私钥绝不能提交到仓库。
+构建后会生成 NSIS `.exe.sig`、macOS `.app.tar.gz.sig`、Linux `.deb.sig` 与
+`.AppImage.sig`。更新私钥绝不能提交到仓库。
 
 ## 自动更新
 
@@ -162,7 +162,7 @@ pnpm tauri build --bundles deb,appimage
 - `latest.json` 同时包含 Windows NSIS、macOS 通用包与 Linux AppImage 的更新条目
 - 更新包使用 minisign 签名，公钥固定在 `src-tauri/tauri.conf.json` 中
 - 签名私钥保存为 GitHub Actions Secret：`TAURI_SIGNING_PRIVATE_KEY`
-- Linux DEB 用户建议下载新 DEB 覆盖安装；自动更新由 AppImage 版本支持
+- Linux DEB 更新会通过 `pkexec` / `sudo` 安装，可能需要输入系统密码
 
 ### 发布新版本
 
@@ -324,8 +324,8 @@ chmod +x Cargo-Sweep-<version>-amd64.AppImage
 ```
 
 DEB 使用 Ubuntu 24.04 的 WebKitGTK 4.1 构建，建议在 Ubuntu 24.04+ 或兼容发行版安装；
-其他发行版可以优先使用 AppImage。Linux 自动更新仅支持 AppImage，DEB 安装建议下载新版本
-安装包覆盖安装。
+其他发行版可以优先使用 AppImage。DEB 与 AppImage 均支持自动更新，DEB 更新时系统会请求
+管理员权限。
 
 ## 安全设计
 

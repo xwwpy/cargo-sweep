@@ -69,9 +69,13 @@ const mac = findAsset(
   (asset) => asset.name.endsWith(".app.tar.gz"),
   "macOS updater archive",
 );
-const linux = findAsset(
-  (asset) => asset.name.endsWith(".AppImage.tar.gz"),
-  "Linux AppImage updater archive",
+const linuxDeb = findAsset(
+  (asset) => asset.name.endsWith(".deb"),
+  "Linux DEB package",
+);
+const linuxAppImage = findAsset(
+  (asset) => asset.name.endsWith(".AppImage"),
+  "Linux AppImage",
 );
 
 const platforms = {};
@@ -87,13 +91,22 @@ const macEntry = {
   url: downloadUrl(mac),
 };
 // The release workflow publishes one universal macOS build.
-platforms["darwin-aarch64"] = macEntry;
-platforms["darwin-x86_64"] = macEntry;
+for (const target of ["darwin-aarch64", "darwin-x86_64"]) {
+  platforms[target] = macEntry;
+  platforms[`${target}-app`] = macEntry;
+}
 
-platforms["linux-x86_64"] = {
-  signature: await signatureFor(linux),
-  url: downloadUrl(linux),
+const linuxDebEntry = {
+  signature: await signatureFor(linuxDeb),
+  url: downloadUrl(linuxDeb),
 };
+const linuxAppImageEntry = {
+  signature: await signatureFor(linuxAppImage),
+  url: downloadUrl(linuxAppImage),
+};
+platforms["linux-x86_64-deb"] = linuxDebEntry;
+platforms["linux-x86_64-appimage"] = linuxAppImageEntry;
+platforms["linux-x86_64"] = linuxAppImageEntry;
 
 const manifest = {
   version,

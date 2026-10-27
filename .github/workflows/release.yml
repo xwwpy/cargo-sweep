@@ -121,7 +121,7 @@ jobs:
       - name: Build universal macOS DMG
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: pnpm tauri build --target universal-apple-darwin --bundles dmg
+        run: pnpm tauri build --target universal-apple-darwin --bundles app,dmg
 
       - name: Upload macOS DMG and updater assets
         shell: bash
@@ -210,23 +210,25 @@ jobs:
           mkdir -p release/linux
 
           DEB=$(find "$BUNDLE/deb" -type f -name '*.deb' | head -n 1)
+          DEB_SIGNATURE=$(find "$BUNDLE/deb" -type f -name '*.deb.sig' | head -n 1)
           APPIMAGE=$(find "$BUNDLE/appimage" -type f -name '*.AppImage' | head -n 1)
-          APP_ARCHIVE=$(find "$BUNDLE/appimage" -type f -name '*.AppImage.tar.gz' | head -n 1)
-          APP_SIGNATURE=$(find "$BUNDLE/appimage" -type f -name '*.AppImage.tar.gz.sig' | head -n 1)
+          APPIMAGE_SIGNATURE=$(find "$BUNDLE/appimage" -type f -name '*.AppImage.sig' | head -n 1)
 
-          if [ -z "$DEB" ] || [ -z "$APPIMAGE" ] || [ -z "$APP_ARCHIVE" ] || [ -z "$APP_SIGNATURE" ]; then
+          if [ -z "$DEB" ] || [ -z "$DEB_SIGNATURE" ] || [ -z "$APPIMAGE" ] || [ -z "$APPIMAGE_SIGNATURE" ]; then
             echo "Linux DEB or AppImage artifacts were not produced"
             find "$BUNDLE" -maxdepth 3 -type f | sort
             exit 1
           fi
 
           cp "$DEB" "release/linux/Cargo-Sweep-${VERSION}-amd64.deb"
+          cp "$DEB_SIGNATURE" "release/linux/Cargo-Sweep-${VERSION}-amd64.deb.sig"
           cp "$APPIMAGE" "release/linux/Cargo-Sweep-${VERSION}-amd64.AppImage"
+          cp "$APPIMAGE_SIGNATURE" "release/linux/Cargo-Sweep-${VERSION}-amd64.AppImage.sig"
           gh release upload "$TAG" \
             "release/linux/Cargo-Sweep-${VERSION}-amd64.deb" \
+            "release/linux/Cargo-Sweep-${VERSION}-amd64.deb.sig" \
             "release/linux/Cargo-Sweep-${VERSION}-amd64.AppImage" \
-            "$APP_ARCHIVE" \
-            "$APP_SIGNATURE" \
+            "release/linux/Cargo-Sweep-${VERSION}-amd64.AppImage.sig" \
             --clobber
 
   manifest:
