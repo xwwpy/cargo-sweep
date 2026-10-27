@@ -700,6 +700,28 @@ html.dark .empty-toolchains {
   border-color: #1f2d40;
 }
 
+html.dark .rustup-banner {
+  background: #2b1d0b;
+  border-color: #5a3a17;
+}
+
+html.dark .rustup-copy h2 {
+  color: #fdb022;
+}
+
+html.dark .rustup-copy p {
+  color: #c9a37c;
+}
+
+html.dark .rustup-actions .el-input__wrapper {
+  background: #1c1409;
+  box-shadow: 0 0 0 1px #5a3a17 inset;
+}
+
+html.dark .rustup-actions .el-input__inner {
+  color: #f5e6d3;
+}
+
 html.dark .setup-banner {
   background: #0d2b2a;
   border-color: #1f4f49;

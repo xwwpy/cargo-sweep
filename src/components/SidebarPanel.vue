@@ -21,6 +21,7 @@ defineProps<{
   checkingUpdates: boolean;
   activePage: "targets" | "sources" | "toolchain";
   rustInstalled: boolean;
+  isMac: boolean;
 }>();
 
 defineEmits<{
@@ -28,6 +29,7 @@ defineEmits<{
   remove: [root: string];
   "check-update": [];
   navigate: [page: "targets" | "sources" | "toolchain"];
+  "allow-read": [];
 }>();
 </script>
 
@@ -116,6 +118,17 @@ defineEmits<{
       <el-icon><InfoFilled /></el-icon>
       <span>递归 10 层</span>
     </div>
+
+    <button
+      v-if="isMac"
+      class="allow-read"
+      type="button"
+      title="在系统设置的「完全磁盘访问权限」中授予 Cargo Sweep 始终读取权限"
+      @click="$emit('allow-read')"
+    >
+      <el-icon><Lock /></el-icon>
+      始终允许读取
+    </button>
 
     <div class="sidebar-spacer" />
 
@@ -475,6 +488,29 @@ defineEmits<{
   padding: 12px 9px 0;
   font-size: 10.5px;
   color: #64748b;
+}
+
+.allow-read {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  align-self: flex-start;
+  padding: 7px 9px;
+  margin: 9px 0 0 6px;
+  font-size: 9.5px;
+  color: #5eead4;
+  cursor: pointer;
+  background: rgba(45, 212, 191, 0.07);
+  border: 1px solid rgba(94, 234, 212, 0.14);
+  border-radius: 6px;
+}
+
+.allow-read:hover {
+  background: rgba(45, 212, 191, 0.12);
+}
+
+.allow-read .el-icon {
+  font-size: 10px;
 }
 
 .sidebar-spacer {

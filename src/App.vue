@@ -28,6 +28,7 @@ import {
   isDemoMode,
   listenToScanProgress,
   openFolder,
+  openPrivacySettings,
   pickFolders,
   probeRustInstallation,
   scanTargets,
@@ -48,6 +49,7 @@ const themeLabel = computed(() => {
 
 const activePage = ref<"targets" | "sources" | "toolchain">("targets");
 const rustInstalled = ref(false);
+const isMac = /Mac/i.test(navigator.userAgent);
 const pageTitle = computed(
   () =>
     ({
@@ -367,6 +369,15 @@ function changeTheme(command: string) {
   setThemeMode(command as ThemeMode);
 }
 
+async function allowReadAccess() {
+  try {
+    await openPrivacySettings();
+    ElMessage.info("已打开系统设置，请将 Cargo Sweep 加入「完全磁盘访问权限」并重启应用");
+  } catch (reason) {
+    ElMessage.error(errorMessage(reason));
+  }
+}
+
 function navigateTo(page: "targets" | "sources" | "toolchain") {
   if (page === "sources" && !rustInstalled.value) {
     activePage.value = "toolchain";
@@ -457,10 +468,12 @@ function uniqueRoots(list: string[]): string[] {
       :checking-updates="checkingUpdates"
       :active-page="activePage"
       :rust-installed="rustInstalled"
+      :is-mac="isMac"
       @add="addRoots"
       @remove="removeRoot"
       @check-update="manualCheckUpdate"
       @navigate="navigateTo"
+      @allow-read="allowReadAccess"
     />
 
     <main ref="mainRef" class="main-content">

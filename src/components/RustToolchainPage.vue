@@ -15,8 +15,10 @@ import {
   checkRustToolchainLatest,
   detectRustToolchain,
   errorMessage,
+  installRustup,
   installRustToolchain,
   setDefaultRustToolchain,
+  setRustupPath,
   updateRustToolchain,
 } from "../api";
 import type {
@@ -56,6 +58,7 @@ const actionSuccess = ref<boolean | null>(null);
 const elapsed = ref(0);
 const historyTarget = ref("");
 const customTarget = ref("");
+const rustupPathInput = ref("");
 let timer: number | undefined;
 
 const rustupReady = computed(() => status.value?.rustupInstalled ?? false);
@@ -198,6 +201,8 @@ async function load() {
   error.value = null;
   try {
     status.value = await detectRustToolchain();
+    rustupPathInput.value =
+      status.value.rustupCustomPath ?? status.value.rustupPath ?? "";
     emit("rust-state", status.value.installed);
     void loadLatest();
   } catch (reason) {
@@ -238,6 +243,30 @@ async function runOperation(
     stopTimer();
     busy.value = null;
   }
+}
+
+async function saveRustupPath() {
+  if (!rustupPathInput.value.trim()) {
+    ElMessage.warning("请输入 rustup 可执行文件或所在目录");
+    return;
+  }
+  await runOperation(
+    "rustup-path",
+    async () => {
+      const next = await setRustupPath(rustupPathInput.value);
+      rustupPathInput.value = next.rustupCustomPath ?? next.rustupPath ?? "";
+      return {
+        success: true,
+        output: `已保存 rustup 路径：${next.rustupPath ?? rustupPathInput.value}`,
+        status: next,
+      };
+    },
+    "rustup 路径已保存",
+  );
+}
+
+async function installRustupAction() {
+  await runOperation("rustup", installRustup, "rustup 已安装");
 }
 
 async function installChannel(view: ChannelView) {
@@ -361,14 +390,43 @@ onUnmounted(stopTimer);
                 ? "在下方选择 Stable 或 Nightly 并设为默认即可。"
                 : "安装 Stable 或 Nightly 后即可使用 Cargo 下载源管理。"
             }}
-            <template v-if="!status.rustupInstalled">
-              未检测到 rustup，请先安装 <code>rustup</code>（https://rustup.rs）。
-            </template>
           </p>
         </div>
         <div class="setup-versions">
           <span v-if="latest?.stable">Stable {{ latest.stable.release }}</span>
           <span v-if="latest?.nightly">Nightly {{ latest.nightly.release }}</span>
+        </div>
+      </div>
+
+      <div v-if="!status.rustupInstalled" class="rustup-banner">
+        <div class="rustup-copy">
+          <h2>未检测到 rustup</h2>
+          <p>已安装但未自动识别？手动指定 rustup 路径，或一键安装。</p>
+        </div>
+        <div class="rustup-actions">
+          <el-input
+            v-model="rustupPathInput"
+            class="rustup-path-input"
+            placeholder="~/.cargo/bin/rustup"
+            :disabled="Boolean(busy)"
+            @keyup.enter="saveRustupPath"
+          />
+          <el-button
+            :disabled="Boolean(busy) || !rustupPathInput"
+            :loading="busy === 'rustup-path'"
+            @click="saveRustupPath"
+          >
+            保存路径
+          </el-button>
+          <el-button
+            type="primary"
+            :loading="busy === 'rustup'"
+            :disabled="Boolean(busy)"
+            @click="installRustupAction"
+          >
+            <el-icon><Download /></el-icon>
+            一键安装 rustup
+          </el-button>
         </div>
       </div>
 
@@ -773,6 +831,65 @@ onUnmounted(stopTimer);
   padding: 4px 6px;
   background: #e4faf5;
   border-radius: 4px;
+}
+
+.rustup-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  align-items: center;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  background: #fffaf2;
+  border: 1px solid #fed7aa;
+  border-radius: 12px;
+}
+
+.rustup-copy {
+  min-width: 210px;
+  flex: 1;
+}
+
+.rustup-copy h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: #9a3412;
+}
+
+.rustup-copy p {
+  margin: 3px 0 0;
+  font-size: 9.5px;
+  line-height: 1.55;
+  color: #9a6a4a;
+}
+
+.rustup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.rustup-path-input {
+  width: 250px;
+}
+
+.rustup-actions :deep(.el-input__wrapper) {
+  min-height: 30px;
+  box-shadow: 0 0 0 1px #f2c7a3 inset;
+}
+
+.rustup-actions :deep(.el-input__inner) {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 9px;
+}
+
+.rustup-actions :deep(.el-button) {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 9.5px;
+  border-radius: 7px;
 }
 
 .current-panel {

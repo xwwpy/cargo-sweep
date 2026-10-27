@@ -1,4 +1,7 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use toml::Value;
@@ -40,6 +43,8 @@ pub struct RustToolchainStatus {
     pub channels: Vec<RustChannel>,
     pub cargo_version: Option<String>,
     pub rustup_version: Option<String>,
+    pub rustup_path: Option<String>,
+    pub rustup_custom_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -74,9 +79,17 @@ pub struct RustInstallationProbe {
     pub installed: bool,
     pub rustup_installed: bool,
     pub version: Option<String>,
+    pub rustup_path: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct AppSettings {
+    #[serde(default)]
+    rustup_path: Option<String>,
 }
 
 pub fn probe() -> RustInstallationProbe {
+    let rustup_path = prepare_rust_environment();
     let rustc_version = run("rustc", &["--version"])
         .ok()
         .and_then(|output| first_line(&output));
@@ -87,10 +100,13 @@ pub fn probe() -> RustInstallationProbe {
         installed: rustc_version.is_some(),
         rustup_installed: rustup_version.is_some(),
         version: rustc_version,
+        rustup_path: rustup_path.map(|path| path.to_string_lossy().to_string()),
     }
 }
 
 pub fn detect() -> Result<RustToolchainStatus, String> {
+    let rustup_path = prepare_rust_environment();
+    let settings = read_settings();
     let rustup_version = run("rustup", &["--version"])
         .ok()
         .and_then(|output| first_line(&output))
@@ -210,6 +226,8 @@ pub fn detect() -> Result<RustToolchainStatus, String> {
         channels,
         cargo_version,
         rustup_version,
+        rustup_path: rustup_path.map(|path| path.to_string_lossy().to_string()),
+        rustup_custom_path: settings.rustup_path,
     })
 }
 
@@ -350,6 +368,279 @@ pub fn update(target: Option<String>) -> Result<ToolchainOperationResult, String
         },
         status,
     })
+}
+
+pub fn set_rustup_path(path: String) -> Result<RustToolchainStatus, String> {
+    let trimmed = path.trim().trim_matches('"').trim_matches('\'');
+    let custom_path = if trimmed.is_empty() {
+        None
+    } else {
+        let candidate = normalize_rustup_path(&expand_tilde(trimmed));
+        if !candidate.is_file() {
+            return Err(format!("未找到 rustup 可执行文件：{}", candidate.display()));
+        }
+        Some(
+            dunce::canonicalize(&candidate)
+                .unwrap_or(candidate)
+                .to_string_lossy()
+                .to_string(),
+        )
+    };
+
+    let mut settings = read_settings();
+    settings.rustup_path = custom_path;
+    write_settings(&settings)?;
+    prepare_rust_environment();
+    detect()
+}
+
+pub fn install_rustup() -> Result<ToolchainOperationResult, String> {
+    prepare_rust_environment();
+    if run("rustup", &["--version"]).is_ok() {
+        return Err("已检测到 rustup，无需重复安装。".into());
+    }
+
+    let target = rustup_target()?;
+    let executable_name = if cfg!(windows) {
+        "rustup-init.exe"
+    } else {
+        "rustup-init"
+    };
+    let url = format!("https://static.rust-lang.org/rustup/dist/{target}/{executable_name}");
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .user_agent(format!("cargo-sweep/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|error| format!("无法创建网络请求：{error}"))?;
+    let response = client
+        .get(&url)
+        .send()
+        .map_err(|error| format!("无法下载 rustup-init：{error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("无法下载 rustup-init：HTTP {}", response.status()));
+    }
+    let bytes = response
+        .bytes()
+        .map_err(|error| format!("无法读取 rustup-init 下载内容：{error}"))?;
+    if bytes.len() < 1024 * 1024 {
+        return Err("下载的 rustup-init 文件不完整，请重试。".into());
+    }
+
+    let temp_dir = std::env::temp_dir().join("cargo-sweep");
+    fs::create_dir_all(&temp_dir).map_err(|error| format!("无法创建临时目录：{error}"))?;
+    let binary = temp_dir.join(executable_name);
+    fs::write(&binary, &bytes).map_err(|error| format!("无法写入 rustup-init：{error}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))
+            .map_err(|error| format!("无法设置 rustup-init 执行权限：{error}"))?;
+    }
+
+    let before = detect()?;
+    let mut command = Command::new(&binary);
+    command.args([
+        "-y",
+        "--default-toolchain",
+        "stable",
+        "--profile",
+        "default",
+    ]);
+    apply_no_window(&mut command);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = command
+        .output()
+        .map_err(|error| format!("无法启动 rustup-init：{error}"))?;
+    let success = output.status.success();
+    let text = clean_output(&format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    ));
+    let _ = fs::remove_file(&binary);
+
+    prepare_rust_environment();
+    let status = detect().unwrap_or(before);
+    Ok(ToolchainOperationResult {
+        success,
+        output: if text.trim().is_empty() {
+            if success {
+                "rustup 已安装。".into()
+            } else {
+                "rustup-init 未返回输出。".into()
+            }
+        } else {
+            text.trim().to_string()
+        },
+        status,
+    })
+}
+
+fn prepare_rust_environment() -> Option<PathBuf> {
+    if let Some(bin) = cargo_bin_dir() {
+        if bin.is_dir() {
+            prepend_path(&bin);
+        }
+    }
+
+    let rustup = resolve_rustup()?;
+    if let Some(parent) = rustup.parent() {
+        prepend_path(parent);
+    }
+    Some(rustup)
+}
+
+fn resolve_rustup() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(custom) = read_settings().rustup_path {
+        candidates.push(normalize_rustup_path(Path::new(&custom)));
+    }
+    if let Some(bin) = cargo_bin_dir() {
+        candidates.push(bin.join(binary_name("rustup")));
+    }
+    if let Some(path) = find_on_path("rustup") {
+        candidates.push(path);
+    }
+
+    #[cfg(unix)]
+    {
+        for directory in [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/opt/local/bin",
+        ] {
+            candidates.push(Path::new(directory).join(binary_name("rustup")));
+        }
+    }
+
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .map(|candidate| dunce::canonicalize(&candidate).unwrap_or(candidate))
+}
+
+fn find_on_path(program: &str) -> Option<PathBuf> {
+    let executable = binary_name(program);
+    env::var_os("PATH")
+        .into_iter()
+        .flat_map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
+        .map(|directory| directory.join(&executable))
+        .find(|candidate| candidate.is_file())
+}
+
+fn cargo_bin_dir() -> Option<PathBuf> {
+    cargo_home().map(|home| home.join("bin"))
+}
+
+fn cargo_home() -> Option<PathBuf> {
+    env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".cargo")))
+}
+
+fn prepend_path(directory: &Path) {
+    let mut paths: Vec<PathBuf> = env::var_os("PATH")
+        .map(|value| env::split_paths(&value).collect())
+        .unwrap_or_default();
+    if paths.iter().any(|path| path == directory) {
+        return;
+    }
+    paths.insert(0, directory.to_path_buf());
+    if let Ok(joined) = env::join_paths(paths) {
+        env::set_var("PATH", joined);
+    }
+}
+
+fn binary_name(program: &str) -> String {
+    if cfg!(windows) {
+        format!("{program}.exe")
+    } else {
+        program.to_string()
+    }
+}
+
+fn expand_tilde(value: &str) -> PathBuf {
+    if value == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home;
+        }
+    }
+    if let Some(rest) = value
+        .strip_prefix("~/")
+        .or_else(|| value.strip_prefix("~\\"))
+    {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
+    }
+    PathBuf::from(value)
+}
+
+fn normalize_rustup_path(path: &Path) -> PathBuf {
+    if path.is_dir() {
+        path.join(binary_name("rustup"))
+    } else {
+        path.to_path_buf()
+    }
+}
+
+fn rustup_target() -> Result<&'static str, String> {
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        return Ok("x86_64-pc-windows-msvc");
+    }
+    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+    {
+        return Ok("aarch64-pc-windows-msvc");
+    }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        return Ok("aarch64-apple-darwin");
+    }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        return Ok("x86_64-apple-darwin");
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        return Ok("x86_64-unknown-linux-gnu");
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        return Ok("aarch64-unknown-linux-gnu");
+    }
+    #[allow(unreachable_code)]
+    Err("当前系统暂不支持一键安装 rustup，请手动安装。".into())
+}
+
+fn settings_path() -> Option<PathBuf> {
+    dirs::data_local_dir()
+        .or_else(dirs::config_dir)
+        .map(|directory| directory.join("CargoSweep").join("settings.json"))
+}
+
+fn read_settings() -> AppSettings {
+    let Some(path) = settings_path() else {
+        return AppSettings::default();
+    };
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok())
+        .unwrap_or_default()
+}
+
+fn write_settings(settings: &AppSettings) -> Result<(), String> {
+    let Some(path) = settings_path() else {
+        return Err("无法定位应用配置目录。".into());
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建应用配置目录：{error}"))?;
+    }
+    let content = serde_json::to_string_pretty(settings)
+        .map_err(|error| format!("无法序列化应用配置：{error}"))?;
+    fs::write(&path, content).map_err(|error| format!("无法保存应用配置：{error}"))
 }
 
 fn fetch_channel(channel: &str) -> Result<LatestRustToolchain, String> {
@@ -624,6 +915,8 @@ LLVM version: 23.1.1";
         let status = detect().expect("rustc should be available in the test environment");
         assert!(status.installed);
         assert!(status.version.is_some());
+        assert!(status.rustup_installed);
+        assert!(status.rustup_path.is_some());
         assert!(status
             .channels
             .iter()

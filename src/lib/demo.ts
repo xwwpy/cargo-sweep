@@ -109,7 +109,11 @@ export async function demoApplyCargoSource(url: string): Promise<ApplyCargoSourc
 
 const DEMO_HOST = "x86_64-pc-windows-msvc";
 const demoNoRust = new URLSearchParams(window.location.search).has("norust");
-let demoInstalled = !demoNoRust;
+const demoNoRustup = new URLSearchParams(window.location.search).has("noustup");
+let demoInstalled = !demoNoRust && !demoNoRustup;
+let demoRustupInstalled = !demoNoRustup;
+let demoRustupPath = demoRustupInstalled ? "/Users/demo/.cargo/bin/rustup" : null;
+let demoCustomRustupPath: string | null = null;
 let demoStable = "1.99.1";
 let demoNightly = "1.101.0";
 let demoDefault = "stable";
@@ -164,7 +168,7 @@ function demoToolchainStatus(): RustToolchainStatus {
   const active = toolchains.find((toolchain) => toolchain.active);
   return {
     installed: demoInstalled,
-    rustupInstalled: true,
+    rustupInstalled: demoRustupInstalled,
     version: active?.release ?? null,
     rustcVersion: active?.rustcVersion ?? null,
     host: DEMO_HOST,
@@ -173,16 +177,44 @@ function demoToolchainStatus(): RustToolchainStatus {
     toolchains,
     channels,
     cargoVersion: "1.99.1",
-    rustupVersion: "1.29.2",
+    rustupVersion: demoRustupInstalled ? "1.29.2" : null,
+    rustupPath: demoRustupPath,
+    rustupCustomPath: demoCustomRustupPath,
   };
 }
 
 export async function demoProbeRustInstallation(): Promise<RustInstallationProbe> {
   return {
     installed: demoInstalled,
-    rustupInstalled: true,
+    rustupInstalled: demoRustupInstalled,
     version: demoInstalled ? `rustc ${demoStable} (demo build)` : null,
+    rustupPath: demoRustupPath,
   };
+}
+
+export async function demoSetRustupPath(path: string): Promise<RustToolchainStatus> {
+  await new Promise((resolve) => window.setTimeout(resolve, 500));
+  demoCustomRustupPath = path.trim() || null;
+  demoRustupInstalled = Boolean(path.trim());
+  demoRustupPath = path.trim() || null;
+  return demoToolchainStatus();
+}
+
+export async function demoInstallRustup(): Promise<RustToolchainOperationResult> {
+  await new Promise((resolve) => window.setTimeout(resolve, 1600));
+  demoRustupInstalled = true;
+  demoRustupPath = "/Users/demo/.cargo/bin/rustup";
+  demoInstalled = true;
+  demoStable = "1.101.0";
+  demoDefault = "stable";
+  return demoOperation(
+    [
+      "info: downloading installer",
+      "info: profile set to 'default'",
+      "info: default toolchain set to 'stable-x86_64-pc-windows-msvc'",
+      "  stable-x86_64-pc-windows-msvc installed",
+    ].join("\n"),
+  );
 }
 
 export async function demoRustToolchainStatus(): Promise<RustToolchainStatus> {

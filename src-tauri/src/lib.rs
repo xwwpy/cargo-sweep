@@ -10,6 +10,8 @@ use scanner::{DeleteResult, ScanProgress, ScanResult};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
 
@@ -140,6 +142,36 @@ async fn check_rust_toolchain_latest() -> Result<LatestRustVersions, String> {
 }
 
 #[tauri::command]
+async fn set_rustup_path(path: String) -> Result<RustToolchainStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || rust_toolchain::set_rustup_path(path))
+        .await
+        .map_err(|error| format!("设置 rustup 路径任务异常退出：{error}"))?
+}
+
+#[tauri::command]
+async fn install_rustup() -> Result<ToolchainOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(rust_toolchain::install_rustup)
+        .await
+        .map_err(|error| format!("安装 rustup 任务异常退出：{error}"))?
+}
+
+#[tauri::command]
+fn open_privacy_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("无法打开系统隐私设置：{error}"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("当前系统无需额外的完全磁盘访问权限。".into())
+    }
+}
+
+#[tauri::command]
 async fn install_rust_toolchain(
     target: String,
     set_default: bool,
@@ -211,6 +243,9 @@ pub fn run() {
             probe_rust_installation,
             detect_rust_toolchain,
             check_rust_toolchain_latest,
+            set_rustup_path,
+            install_rustup,
+            open_privacy_settings,
             install_rust_toolchain,
             set_default_rust_toolchain,
             update_rust_toolchain,

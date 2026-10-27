@@ -17,12 +17,14 @@ import {
   demoCargoSourceStatus,
   demoCheckRustLatest,
   demoDelete,
+  demoInstallRustup,
   demoInstallRustToolchain,
   demoProbeRustInstallation,
   demoRoots,
   demoRustToolchainStatus,
   demoScan,
   demoSetDefaultRustToolchain,
+  demoSetRustupPath,
   demoUpdateRustToolchain,
 } from "./lib/demo";
 
@@ -89,9 +91,39 @@ export async function probeRustInstallation(): Promise<RustInstallationProbe> {
     return demoProbeRustInstallation();
   }
   if (!isTauriRuntime()) {
-    return { installed: false, rustupInstalled: false, version: null };
+    return { installed: false, rustupInstalled: false, version: null, rustupPath: null };
   }
   return invoke<RustInstallationProbe>("probe_rust_installation");
+}
+
+export async function setRustupPath(path: string): Promise<RustToolchainStatus> {
+  if (isDemoMode()) {
+    return demoSetRustupPath(path);
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<RustToolchainStatus>("set_rustup_path", { path });
+}
+
+export async function installRustup(): Promise<RustToolchainOperationResult> {
+  if (isDemoMode()) {
+    return demoInstallRustup();
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<RustToolchainOperationResult>("install_rustup");
+}
+
+export async function openPrivacySettings(): Promise<void> {
+  if (isDemoMode()) {
+    return;
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  await invoke("open_privacy_settings");
 }
 
 export async function detectRustToolchain(): Promise<RustToolchainStatus> {

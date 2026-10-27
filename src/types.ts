@@ -93,6 +93,8 @@ export interface RustToolchainStatus {
   channels: RustChannel[];
   cargoVersion: string | null;
   rustupVersion: string | null;
+  rustupPath: string | null;
+  rustupCustomPath: string | null;
 }
 
 export interface LatestRustToolchain {
@@ -119,4 +121,5 @@ export interface RustInstallationProbe {
   installed: boolean;
   rustupInstalled: boolean;
   version: string | null;
+  rustupPath: string | null;
 }
