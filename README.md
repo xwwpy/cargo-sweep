@@ -159,7 +159,7 @@ pnpm tauri build --bundles deb,appimage
 - 应用启动约 3 秒后静默检查一次更新，底部版本号与顶栏版本胶囊可手动检查
 - 发现新版本后展示更新横幅；弹窗中可查看版本、发布日期和 Release Notes
 - 下载、签名校验、安装由 Tauri Updater 完成，安装完成后自动重启
-- `latest.json` 同时包含 Windows NSIS、macOS 通用包与 Linux AppImage 的更新条目
+- `latest.json` 同时包含 Windows NSIS、macOS 通用包与 Linux DEB / AppImage 的更新条目
 - 更新包使用 minisign 签名，公钥固定在 `src-tauri/tauri.conf.json` 中
 - 签名私钥保存为 GitHub Actions Secret：`TAURI_SIGNING_PRIVATE_KEY`
 - Linux DEB 更新会通过 `pkexec` / `sudo` 安装，可能需要输入系统密码
@@ -231,6 +231,8 @@ Release 会同时提供 Windows、macOS 和 Linux 安装包。下载地址：
 
 <https://github.com/xwwpy/cargo-sweep/releases/latest>
 
+下面的命令以 **0.4.0** 为例，后续版本只需替换文件名中的版本号。
+
 ### Windows
 
 - `Cargo-Sweep-<version>-installer-x64.zip`
@@ -261,7 +263,7 @@ Error writing temporary file. Make sure your temp folder is valid.
 下载通用 DMG：
 
 ```text
-Cargo-Sweep-<version>-universal.dmg
+Cargo-Sweep-0.4.0-universal.dmg
 ```
 
 安装步骤：
@@ -269,7 +271,7 @@ Cargo-Sweep-<version>-universal.dmg
 1. 打开 DMG：
 
 ```bash
-open ~/Downloads/Cargo-Sweep-<version>-universal.dmg
+open ~/Downloads/Cargo-Sweep-0.4.0-universal.dmg
 ```
 
 2. 将 **Cargo Sweep** 拖入「应用程序」文件夹。
@@ -286,21 +288,21 @@ xattr -dr com.apple.quarantine "/Applications/Cargo Sweep.app"
 下载 DEB：
 
 ```text
-Cargo-Sweep-<version>-amd64.deb
+Cargo-Sweep-0.4.0-amd64.deb
 ```
 
 在下载目录执行：
 
 ```bash
 cd ~/Downloads
-sudo apt install ./Cargo-Sweep-<version>-amd64.deb
+sudo apt install ./Cargo-Sweep-0.4.0-amd64.deb
 ```
 
 `apt install ./xxx.deb` 会自动安装 WebKitGTK 等依赖。如果当前发行版的 `apt` 不接受本地
 DEB，可改用：
 
 ```bash
-sudo dpkg -i ./Cargo-Sweep-<version>-amd64.deb
+sudo dpkg -i ./Cargo-Sweep-0.4.0-amd64.deb
 sudo apt-get install -f
 ```
 
@@ -319,8 +321,8 @@ sudo apt remove cargo-sweep
 如果不使用 DEB，也可以下载便携版 AppImage：
 
 ```bash
-chmod +x Cargo-Sweep-<version>-amd64.AppImage
-./Cargo-Sweep-<version>-amd64.AppImage
+chmod +x Cargo-Sweep-0.4.0-amd64.AppImage
+./Cargo-Sweep-0.4.0-amd64.AppImage
 ```
 
 DEB 使用 Ubuntu 24.04 的 WebKitGTK 4.1 构建，建议在 Ubuntu 24.04+ 或兼容发行版安装；
