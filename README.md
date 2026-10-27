@@ -36,6 +36,17 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 - 原生目录选择器：通过 Tauri Dialog 插件选择扫描范围
 - **GitHub Releases 自动更新**：启动后台检查、手动检查、下载进度与自动重启
 
+## 平台支持
+
+| 平台 | 安装包 | 自动更新 |
+| --- | --- | --- |
+| Windows 10 / 11 x64 | NSIS 安装包、免安装版 | 支持 |
+| macOS 10.15+（Intel / Apple Silicon） | 通用 DMG | 支持 |
+| Linux x86_64 | DEB、AppImage | AppImage 支持；DEB 建议下载新包 |
+
+Linux DEB 使用 Ubuntu 24.04 的 WebKitGTK 4.1 构建，适用于 Ubuntu 24.04+ 及兼容发行版；
+其他发行版可以直接使用 AppImage。
+
 ## 界面
 
 | 浅色主题 | 深色主题 |
@@ -61,6 +72,7 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 | 层 | 技术 |
 | --- | --- |
 | 桌面壳 | Tauri 2 |
+| 平台 | Windows 10/11、macOS 10.15+、Linux x86_64 |
 | 后端 | Rust 2021、WalkDir、Rayon、Toml、toml_edit |
 | 前端 | Vue 3 + TypeScript + Vite 8 |
 | 组件库 | Element Plus 2 |
@@ -80,7 +92,8 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 - pnpm 10+
 - Rust >= 1.90
 - Windows 需要 WebView2 Runtime 与 MSVC Build Tools
-- macOS / Linux 需要对应平台的 Tauri 构建依赖
+- macOS 需要 Xcode Command Line Tools
+- Linux 需要 WebKitGTK 4.1、AppIndicator、librsvg、patchelf 等 Tauri 构建依赖（命令见下文）
 
 ### 启动开发模式
 
@@ -102,30 +115,43 @@ pnpm dev
 
 ### 构建
 
-```bash
-pnpm tauri build
-```
-
-Windows 上会生成 NSIS / MSI 安装包，macOS / Linux 上生成对应平台的原生包。也可以只构建
-Windows NSIS 安装包：
+Windows：
 
 ```bash
 pnpm tauri build --bundles nsis
 ```
 
-产物位置：
+产物位于 `src-tauri/target/release/bundle/nsis/`。
 
-- 可执行文件：`src-tauri/target/release/cargo-sweep.exe`
-- Windows 安装包：`src-tauri/target/release/bundle/nsis/`
+macOS 通用包（Intel + Apple Silicon）：
 
-自动更新产物需要签名密钥：
-
-```powershell
-$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw .secrets/cargo-sweep-updater.key
-pnpm tauri build --bundles nsis
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+pnpm tauri build --target universal-apple-darwin --bundles dmg
 ```
 
-构建后会额外生成 `*-setup.exe.sig`。更新私钥绝不能提交到仓库。
+产物位于 `src-tauri/target/universal-apple-darwin/release/bundle/dmg/`。
+
+Linux：
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+  librsvg2-dev patchelf libxdo-dev libssl-dev
+pnpm tauri build --bundles deb,appimage
+```
+
+产物位于 `src-tauri/target/release/bundle/deb/` 和
+`src-tauri/target/release/bundle/appimage/`。
+
+自动更新产物需要签名密钥；CI 会从 `TAURI_SIGNING_PRIVATE_KEY` Secret 读取。本地构建示例：
+
+```bash
+export TAURI_SIGNING_PRIVATE_KEY="$(cat .secrets/cargo-sweep-updater.key)"
+pnpm tauri build --bundles deb,appimage
+```
+
+构建后会生成 NSIS `.sig`、macOS `.app.tar.gz.sig` 与 Linux `.AppImage.tar.gz.sig`。
+更新私钥绝不能提交到仓库。
 
 ## 自动更新
 
@@ -133,8 +159,10 @@ pnpm tauri build --bundles nsis
 - 应用启动约 3 秒后静默检查一次更新，底部版本号与顶栏版本胶囊可手动检查
 - 发现新版本后展示更新横幅；弹窗中可查看版本、发布日期和 Release Notes
 - 下载、签名校验、安装由 Tauri Updater 完成，安装完成后自动重启
+- `latest.json` 同时包含 Windows NSIS、macOS 通用包与 Linux AppImage 的更新条目
 - 更新包使用 minisign 签名，公钥固定在 `src-tauri/tauri.conf.json` 中
 - 签名私钥保存为 GitHub Actions Secret：`TAURI_SIGNING_PRIVATE_KEY`
+- Linux DEB 用户建议下载新 DEB 覆盖安装；自动更新由 AppImage 版本支持
 
 ### 发布新版本
 
@@ -146,13 +174,16 @@ pnpm tauri build --bundles nsis
 
 ```bash
 git add .
-git commit -m "release: v0.3.2"
-git tag v0.3.2
+git commit -m "release: v0.4.0"
+git tag v0.4.0
 git push origin main --tags
 ```
 
-4. GitHub Actions 会使用 `TAURI_SIGNING_PRIVATE_KEY` 构建带签名的 NSIS 安装包，生成并上传
-   `latest.json`，同时打包免安装版和带临时目录修复的安装脚本。
+4. GitHub Actions 会依次完成：
+   - Windows：签名 NSIS 安装包、Windows 临时目录修复脚本与免安装版
+   - macOS：签名更新归档与通用 DMG
+   - Linux：签名 AppImage 更新归档、DEB 与 AppImage
+   - 汇总所有平台资产，生成跨平台 `latest.json` 与 `SHA256SUMS.txt`
 
 > 如果私钥丢失，已发布版本将无法再收到更新。请把私钥和密码（如有）备份到安全位置。
 
@@ -194,9 +225,13 @@ git push origin main --tags
 
 下次执行 `cargo build` 时，Cargo 会按需重新生成 `target`，不会影响源码。
 
-## Windows 安装包与免安装版
+## 下载与安装
 
-GitHub Release 会附带两个压缩包：
+Release 会同时提供 Windows、macOS 和 Linux 安装包。下载地址：
+
+<https://github.com/xwwpy/cargo-sweep/releases/latest>
+
+### Windows
 
 - `Cargo-Sweep-<version>-installer-x64.zip`
 - `Cargo-Sweep-<version>-portable-x64.zip`
@@ -220,6 +255,77 @@ Error writing temporary file. Make sure your temp folder is valid.
 ```
 
 安装包未做代码签名，Windows 可能提示“未知发布者”；请选择“更多信息 → 仍要运行”。
+
+### macOS
+
+下载通用 DMG：
+
+```text
+Cargo-Sweep-<version>-universal.dmg
+```
+
+安装步骤：
+
+1. 打开 DMG：
+
+```bash
+open ~/Downloads/Cargo-Sweep-<version>-universal.dmg
+```
+
+2. 将 **Cargo Sweep** 拖入「应用程序」文件夹。
+3. 首次启动时如果提示无法验证开发者，请在 Finder 中右键点击 Cargo Sweep，选择「打开」。
+
+安装包未做 Apple 代码签名与公证。如果仍被 Gatekeeper 拦截，可以清除隔离属性：
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Cargo Sweep.app"
+```
+
+### Linux
+
+下载 DEB：
+
+```text
+Cargo-Sweep-<version>-amd64.deb
+```
+
+在下载目录执行：
+
+```bash
+cd ~/Downloads
+sudo apt install ./Cargo-Sweep-<version>-amd64.deb
+```
+
+`apt install ./xxx.deb` 会自动安装 WebKitGTK 等依赖。如果当前发行版的 `apt` 不接受本地
+DEB，可改用：
+
+```bash
+sudo dpkg -i ./Cargo-Sweep-<version>-amd64.deb
+sudo apt-get install -f
+```
+
+安装后可以从应用菜单启动，或在终端运行：
+
+```bash
+cargo-sweep
+```
+
+卸载：
+
+```bash
+sudo apt remove cargo-sweep
+```
+
+如果不使用 DEB，也可以下载便携版 AppImage：
+
+```bash
+chmod +x Cargo-Sweep-<version>-amd64.AppImage
+./Cargo-Sweep-<version>-amd64.AppImage
+```
+
+DEB 使用 Ubuntu 24.04 的 WebKitGTK 4.1 构建，建议在 Ubuntu 24.04+ 或兼容发行版安装；
+其他发行版可以优先使用 AppImage。Linux 自动更新仅支持 AppImage，DEB 安装建议下载新版本
+安装包覆盖安装。
 
 ## 安全设计
 
@@ -263,7 +369,7 @@ Error writing temporary file. Make sure your temp folder is valid.
 
 ```text
 cargo-sweep/
-├─ .github/workflows/release.yml  # 标签触发的签名发布
+├─ .github/workflows/release.yml  # 标签触发的 Windows / macOS / Linux 发布
 ├─ CHANGELOG.md                   # 每个版本仅记录当次功能与修复
 ├─ src/
 │  ├─ App.vue                     # 页面状态、扫描、清理与更新入口
@@ -283,9 +389,9 @@ cargo-sweep/
 │  ├─ theme-dark.css              # 深色主题覆盖样式
 │  └─ styles.css                  # Ink & Mint 主题
 ├─ packaging/                     # 发布包说明与启动脚本模板
-├─ scripts/package-release.ps1    # 本地 / CI 发布包打包
+├─ scripts/package-release.ps1    # Windows 安装包 / 免安装版打包
 ├─ scripts/release-notes.mjs      # 从 CHANGELOG 提取当前版本发布说明
-├─ scripts/fix-updater-notes.mjs  # 修正更新清单的 UTF-8 发布说明
+├─ scripts/generate-latest-json.mjs # 汇总三平台签名与更新清单
 ├─ src-tauri/
 │  ├─ src/scanner.rs              # 扫描、测量、校验、删除与单元测试
 │  ├─ src/cargo_source.rs         # Cargo 源检测、备份与切换

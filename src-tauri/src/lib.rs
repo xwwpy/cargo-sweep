@@ -41,8 +41,9 @@ fn crash_log_path() -> PathBuf {
         .join("startup.log")
 }
 
-/// Common Windows setups point TEMP at a folder that restricted processes
+/// Some Windows setups point TEMP at a folder that restricted processes
 /// cannot use. Give WebView2 a private, known-writable runtime folder instead.
+/// The same private folder is also used on macOS and Linux via TMPDIR.
 fn configure_runtime_temp() -> Option<PathBuf> {
     let base = dirs::data_local_dir()?;
     let runtime = base.join("CargoSweep").join("runtime");
@@ -53,6 +54,7 @@ fn configure_runtime_temp() -> Option<PathBuf> {
 
     std::env::set_var("TEMP", &temp);
     std::env::set_var("TMP", &temp);
+    std::env::set_var("TMPDIR", &temp);
     std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &webview);
     Some(temp)
 }

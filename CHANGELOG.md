@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0] - 2026-10-27
+
+### 新功能
+
+- 新增 macOS 通用 DMG，兼容 Apple Silicon 与 Intel Mac
+- 新增 Linux DEB 与 AppImage 安装包
+- 发布流程支持 Windows、macOS、Linux 多平台构建，并生成统一的跨平台更新清单
+
+### 优化
+
+- 统一 macOS / Linux 的私有临时目录处理
+
+### 文档
+
+- 增加 macOS 与 Linux 安装说明及 Linux 安装命令
+
 ## [0.3.2] - 2026-10-27
 
 ### 新功能

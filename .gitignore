@@ -7,6 +7,8 @@ dist-ssr/
 release/
 .packaging/
 .release-notes.md
+latest.json
+SHA256SUMS.txt
 src-tauri/target/
 src-tauri/gen/
 
