@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Close, FolderOpened, InfoFilled, Lock, Plus } from "@element-plus/icons-vue";
-import { basename, formatBytes } from "../lib/format";
+import { basename, cleanPath, formatBytes } from "../lib/format";
 
 defineProps<{
   roots: string[];
@@ -50,8 +50,8 @@ defineEmits<{
         </div>
         <div class="root-copy">
           <span class="root-name">{{ basename(root) }}</span>
-          <el-tooltip :content="root" placement="bottom-start" :show-after="500">
-            <span class="root-path">{{ root }}</span>
+          <el-tooltip :content="cleanPath(root)" placement="bottom-start" :show-after="500">
+            <span class="root-path">{{ cleanPath(root) }}</span>
           </el-tooltip>
         </div>
         <button

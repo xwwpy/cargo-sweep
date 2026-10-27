@@ -111,7 +111,7 @@ where
             measured: 0,
         });
 
-        let root = match fs::canonicalize(raw_root) {
+        let root = match dunce::canonicalize(raw_root) {
             Ok(path) if path.is_dir() => path,
             _ => {
                 skipped_roots.push(raw_root.clone());
@@ -126,7 +126,7 @@ where
         for candidate in candidates {
             // Resolve `..` and duplicate roots, but never resolve a symlinked
             // target itself: `is_cargo_target` rejects those up front.
-            let Ok(canonical) = fs::canonicalize(&candidate) else {
+            let Ok(canonical) = dunce::canonicalize(&candidate) else {
                 continue;
             };
             if is_cargo_target(&canonical) && seen.insert(canonical.clone()) {
@@ -259,7 +259,7 @@ pub fn default_scan_roots() -> Vec<String> {
         if !candidate.is_dir() {
             continue;
         }
-        let Ok(canonical) = fs::canonicalize(&candidate) else {
+        let Ok(canonical) = dunce::canonicalize(&candidate) else {
             continue;
         };
         if seen.insert(canonical.clone()) {
@@ -436,7 +436,7 @@ fn validate_target(path: &Path) -> Result<PathBuf, String> {
         return Err("父目录中没有 Cargo.toml，拒绝删除。".into());
     }
 
-    let canonical = fs::canonicalize(path).map_err(|error| format!("无法解析路径：{error}"))?;
+    let canonical = dunce::canonicalize(path).map_err(|error| format!("无法解析路径：{error}"))?;
 
     if canonical.file_name().and_then(|name| name.to_str()) != Some("target") {
         return Err("路径解析后不是 target 目录，拒绝删除。".into());
@@ -527,13 +527,15 @@ mod tests {
         assert_eq!(target.project_name, "demo-app");
         assert_eq!(
             target.path,
-            fs::canonicalize(project.join("target"))
+            dunce::canonicalize(project.join("target"))
                 .unwrap()
                 .display()
                 .to_string()
         );
         assert!(target.size_bytes >= 2048);
         assert_eq!(target.file_count, 1);
+        #[cfg(windows)]
+        assert!(!target.path.starts_with(r"\\?\"));
     }
 
     #[test]

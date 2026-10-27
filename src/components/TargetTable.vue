@@ -11,6 +11,7 @@ import { ElMessage } from "element-plus";
 import type { ScanProgress, TargetInfo } from "../types";
 import {
   basename,
+  cleanPath,
   formatBytes,
   formatCount,
   formatDateTime,
@@ -193,10 +194,10 @@ defineExpose({
                 <button
                   class="project-path"
                   type="button"
-                  :title="`复制路径：${row.path}`"
-                  @click="copyPath(row.path)"
+                  :title="`复制路径：${cleanPath(row.path)}`"
+                  @click="copyPath(cleanPath(row.path))"
                 >
-                  <span>{{ row.path }}</span>
+                  <span>{{ cleanPath(row.path) }}</span>
                   <el-icon class="copy-icon"><DocumentCopy /></el-icon>
                 </button>
               </div>

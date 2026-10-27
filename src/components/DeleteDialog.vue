@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { Close, Delete, InfoFilled, WarningFilled } from "@element-plus/icons-vue";
 import type { TargetInfo } from "../types";
-import { formatBytes, formatCount } from "../lib/format";
+import { cleanPath, formatBytes, formatCount } from "../lib/format";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -99,7 +99,7 @@ function handleBeforeClose(done: () => void) {
       <div class="target-preview">
         <div v-for="target in previewTargets" :key="target.path" class="preview-row">
           <span class="preview-name">{{ target.projectName }}</span>
-          <span class="preview-path">{{ target.path }}</span>
+          <span class="preview-path">{{ cleanPath(target.path) }}</span>
           <span class="preview-size">{{ formatBytes(target.sizeBytes) }}</span>
         </div>
         <div v-if="overflowCount > 0" class="preview-more">

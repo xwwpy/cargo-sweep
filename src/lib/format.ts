@@ -79,8 +79,18 @@ export function formatDuration(milliseconds: number): string {
   return `${(milliseconds / 1000).toFixed(1)} s`;
 }
 
+export function cleanPath(path: string): string {
+  if (path.startsWith("\\\\?\\UNC\\")) {
+    return `\\\\${path.slice(8)}`;
+  }
+  if (path.startsWith("\\\\?\\")) {
+    return path.slice(4);
+  }
+  return path;
+}
+
 export function basename(path: string): string {
-  const normalized = path.replace(/[\\/]+$/, "");
+  const normalized = cleanPath(path).replace(/[\\/]+$/, "");
   const segments = normalized.split(/[\\/]/);
   return segments[segments.length - 1] || normalized;
 }

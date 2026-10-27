@@ -21,6 +21,7 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 - 可视化统计：可回收空间、文件总数、target 数量、上次扫描耗时
 - 按项目查看：项目名、完整 target 路径、占用空间、文件数、最近构建时间
 - 一键打开：在文件资源管理器中直接打开选中的 target 目录
+- 清爽路径：自动移除 Windows 规范化路径的 `\\?\` 前缀
 - 快速筛选：按项目名或路径实时搜索
 - 三种清理方式：
   - 单条「清理」
@@ -131,8 +132,8 @@ pnpm tauri build --bundles nsis
 
 ```bash
 git add .
-git commit -m "release: v0.2.1"
-git tag v0.2.1
+git commit -m "release: v0.2.2"
+git tag v0.2.2
 git push origin main --tags
 ```
 

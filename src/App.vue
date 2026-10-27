@@ -19,7 +19,7 @@ import {
   pickFolders,
   scanTargets,
 } from "./api";
-import { basename, formatBytes, pathKey } from "./lib/format";
+import { basename, cleanPath, formatBytes, pathKey } from "./lib/format";
 import { APP_VERSION } from "./lib/version";
 import type { ScanProgress, TargetInfo } from "./types";
 
@@ -326,7 +326,7 @@ function handleSelection(rows: TargetInfo[]) {
 
 async function openTargetLocation(target: TargetInfo) {
   try {
-    await openFolder(target.path);
+    await openFolder(cleanPath(target.path));
   } catch (error) {
     ElMessage.error(`打开目录失败：${errorMessage(error)}`);
   }
