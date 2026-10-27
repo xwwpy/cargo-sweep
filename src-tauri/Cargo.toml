@@ -1,6 +1,6 @@
 [package]
 name = "cargo-sweep"
-version = "0.2.2"
+version = "0.3.0"
 description = "Discover and reclaim disk space used by Rust Cargo target directories"
 authors = ["Cargo Sweep"]
 edition = "2021"
@@ -24,6 +24,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "system-proxy", "zip"] }
 toml = "0.8"
+toml_edit = "0.22"
 walkdir = "2.5"
 
 [dev-dependencies]

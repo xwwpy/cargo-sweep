@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-sweep"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "dirs",
  "dunce",
@@ -273,6 +273,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "toml 0.8.23",
+ "toml_edit 0.22.27",
  "walkdir",
 ]
 

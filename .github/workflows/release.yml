@@ -55,6 +55,7 @@ jobs:
             - 全新 Ink & Mint 界面配色
             - 新增 GitHub Releases 自动更新
             - 新增一键打开 target 目录
+            - 新增 Cargo 下载源管理页面，支持自动检测、内置镜像和自定义换源
             - 修复 Windows target 路径显示多余前缀的问题
             - 修复 Windows 临时目录导致安装失败的问题
             - 优化扫描进度、表格与清理确认体验

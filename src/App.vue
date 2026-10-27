@@ -6,6 +6,7 @@ import SidebarPanel from "./components/SidebarPanel.vue";
 import SummaryCards from "./components/SummaryCards.vue";
 import TargetTable from "./components/TargetTable.vue";
 import DeleteDialog from "./components/DeleteDialog.vue";
+import CargoSourcePage from "./components/CargoSourcePage.vue";
 import UpdateBanner from "./components/UpdateBanner.vue";
 import UpdateDialog from "./components/UpdateDialog.vue";
 import { useUpdater } from "./composables/useUpdater";
@@ -25,6 +26,8 @@ import type { ScanProgress, TargetInfo } from "./types";
 
 const STORAGE_KEY = "cargo-sweep.scan-roots.v1";
 
+const activePage = ref<"targets" | "sources">("targets");
+const mainRef = ref<HTMLElement | null>(null);
 const roots = ref<string[]>([]);
 const targets = ref<TargetInfo[]>([]);
 const selectedRows = ref<TargetInfo[]>([]);
@@ -320,6 +323,11 @@ async function confirmDelete() {
   }
 }
 
+function navigateTo(page: "targets" | "sources") {
+  activePage.value = page;
+  requestAnimationFrame(() => mainRef.value?.scrollTo({ top: 0, behavior: "smooth" }));
+}
+
 function handleSelection(rows: TargetInfo[]) {
   selectedRows.value = rows;
 }
@@ -395,21 +403,23 @@ function uniqueRoots(list: string[]): string[] {
       :version="APP_VERSION"
       :update-available="hasUpdate"
       :checking-updates="checkingUpdates"
+      :active-page="activePage"
       @add="addRoots"
       @remove="removeRoot"
       @check-update="manualCheckUpdate"
+      @navigate="navigateTo"
     />
 
-    <main class="main-content">
+    <main ref="mainRef" class="main-content">
       <div class="topbar">
         <div class="breadcrumb">
           <span>工作台</span>
           <i>/</i>
-          <strong>空间总览</strong>
+          <strong>{{ activePage === "targets" ? "空间总览" : "Cargo 下载源" }}</strong>
         </div>
 
         <div class="topbar-actions">
-          <span class="sync-state" :class="{ busy: scanning }">
+          <span v-if="activePage === 'targets'" class="sync-state" :class="{ busy: scanning }">
             <i class="sync-dot" />
             {{ syncLabel }}
           </span>
@@ -435,29 +445,32 @@ function uniqueRoots(list: string[]): string[] {
             </button>
           </el-tooltip>
 
-          <el-button
-            class="header-button add-folder-button"
-            :disabled="scanning"
-            @click="addRoots"
-          >
-            <el-icon><Plus /></el-icon>
-            添加目录
-          </el-button>
+          <template v-if="activePage === 'targets'">
+            <el-button
+              class="header-button add-folder-button"
+              :disabled="scanning"
+              @click="addRoots"
+            >
+              <el-icon><Plus /></el-icon>
+              添加目录
+            </el-button>
 
-          <el-button
-            type="primary"
-            class="header-button scan-button"
-            :loading="scanning"
-            :disabled="roots.length === 0"
-            @click="runScan"
-          >
-            <el-icon v-if="!scanning"><Refresh /></el-icon>
-            {{ scanning ? "扫描中" : "重新扫描" }}
-          </el-button>
+            <el-button
+              type="primary"
+              class="header-button scan-button"
+              :loading="scanning"
+              :disabled="roots.length === 0"
+              @click="runScan"
+            >
+              <el-icon v-if="!scanning"><Refresh /></el-icon>
+              {{ scanning ? "扫描中" : "重新扫描" }}
+            </el-button>
+          </template>
         </div>
       </div>
 
-      <header class="hero">
+      <template v-if="activePage === 'targets'">
+        <header class="hero">
         <div class="hero-copy">
           <span class="eyebrow"><i /> CARGO TARGET CLEANER</span>
           <h1>清理构建缓存，<span>让磁盘轻一点。</span></h1>
@@ -524,13 +537,20 @@ function uniqueRoots(list: string[]): string[] {
           @open-location="openTargetLocation"
           @add="addRoots"
         />
-      </section>
+        </section>
+      </template>
+
+      <CargoSourcePage v-else />
 
       <footer class="app-footer">
         <span class="footer-brand">Cargo Sweep · github.com/xwwpy/cargo-sweep</span>
-        <span class="footer-note">
+        <span v-if="activePage === 'targets'" class="footer-note">
           <i />
           删除前校验 Cargo.toml · 符号链接自动跳过
+        </span>
+        <span v-else class="footer-note">
+          <i />
+          切换前自动备份 Cargo 配置 · 支持自定义索引
         </span>
       </footer>
     </main>

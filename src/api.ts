@@ -1,8 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { DeleteResult, ScanProgress, ScanResult } from "./types";
-import { demoDelete, demoRoots, demoScan } from "./lib/demo";
+import type {
+  ApplyCargoSourceResult,
+  CargoSourceStatus,
+  DeleteResult,
+  ScanProgress,
+  ScanResult,
+} from "./types";
+import {
+  demoApplyCargoSource,
+  demoCargoSourceStatus,
+  demoDelete,
+  demoRoots,
+  demoScan,
+} from "./lib/demo";
 
 export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -40,6 +52,26 @@ export async function deleteTargets(paths: string[]): Promise<DeleteResult> {
     throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
   }
   return invoke<DeleteResult>("delete_targets", { paths });
+}
+
+export async function detectCargoSource(): Promise<CargoSourceStatus> {
+  if (isDemoMode()) {
+    return demoCargoSourceStatus();
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<CargoSourceStatus>("detect_cargo_source");
+}
+
+export async function applyCargoSource(url: string): Promise<ApplyCargoSourceResult> {
+  if (isDemoMode()) {
+    return demoApplyCargoSource(url);
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<ApplyCargoSourceResult>("apply_cargo_source", { url });
 }
 
 export async function openFolder(path: string): Promise<void> {

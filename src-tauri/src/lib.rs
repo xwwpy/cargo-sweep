@@ -1,5 +1,7 @@
+mod cargo_source;
 mod scanner;
 
+use cargo_source::{ApplySourceResult, CargoSourceStatus};
 use scanner::{DeleteResult, ScanProgress, ScanResult};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -101,6 +103,18 @@ fn default_scan_roots() -> Vec<String> {
 }
 
 #[tauri::command]
+fn detect_cargo_source() -> Result<CargoSourceStatus, String> {
+    cargo_source::detect()
+}
+
+#[tauri::command]
+async fn apply_cargo_source(url: String) -> Result<ApplySourceResult, String> {
+    tauri::async_runtime::spawn_blocking(move || cargo_source::apply(url))
+        .await
+        .map_err(|error| format!("切换 Cargo 源任务异常退出：{error}"))?
+}
+
+#[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
     let folder = std::path::PathBuf::from(&path);
     if !folder.is_dir() {
@@ -143,6 +157,8 @@ pub fn run() {
             scan_targets,
             delete_targets,
             default_scan_roots,
+            detect_cargo_source,
+            apply_cargo_source,
             open_folder
         ])
         .run(tauri::generate_context!());

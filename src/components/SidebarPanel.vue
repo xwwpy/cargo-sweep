@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { Close, FolderOpened, InfoFilled, Lock, Plus } from "@element-plus/icons-vue";
+import {
+  Close,
+  Connection,
+  FolderOpened,
+  Grid,
+  InfoFilled,
+  Lock,
+  Plus,
+} from "@element-plus/icons-vue";
 import { basename, cleanPath, formatBytes } from "../lib/format";
 
 defineProps<{
@@ -10,12 +18,14 @@ defineProps<{
   version: string;
   updateAvailable: boolean;
   checkingUpdates: boolean;
+  activePage: "targets" | "sources";
 }>();
 
 defineEmits<{
   add: [];
   remove: [root: string];
   "check-update": [];
+  navigate: [page: "targets" | "sources"];
 }>();
 </script>
 
@@ -28,6 +38,29 @@ defineEmits<{
         <span class="brand-kicker">TARGET CLEANER</span>
       </div>
     </div>
+
+    <nav class="page-nav" aria-label="主导航">
+      <button
+        class="nav-item"
+        :class="{ active: activePage === 'targets' }"
+        type="button"
+        @click="$emit('navigate', 'targets')"
+      >
+        <span class="nav-icon"><el-icon><Grid /></el-icon></span>
+        <span class="nav-title">空间清理</span>
+        <span class="nav-hint">Targets</span>
+      </button>
+      <button
+        class="nav-item"
+        :class="{ active: activePage === 'sources' }"
+        type="button"
+        @click="$emit('navigate', 'sources')"
+      >
+        <span class="nav-icon"><el-icon><Connection /></el-icon></span>
+        <span class="nav-title">Cargo 下载源</span>
+        <span class="nav-hint">Registry</span>
+      </button>
+    </nav>
 
     <div class="intro">
       <span class="intro-label"><i class="live-dot" /> 工作区</span>
@@ -179,9 +212,81 @@ defineEmits<{
   color: #7f8ea3;
 }
 
+.page-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px 4px 0;
+}
+
+.nav-item {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  width: 100%;
+  padding: 9px 9px;
+  color: #8595a9;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  transition:
+    color 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease;
+}
+
+.nav-item:hover {
+  color: #d4f8f0;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.nav-item.active {
+  color: #ecfff9;
+  background:
+    linear-gradient(90deg, rgba(45, 212, 191, 0.14), rgba(45, 212, 191, 0.035));
+  border-color: rgba(94, 234, 212, 0.1);
+  box-shadow: inset 2px 0 0 #2dd4bf;
+}
+
+.nav-icon {
+  display: grid;
+  flex: 0 0 25px;
+  width: 25px;
+  height: 25px;
+  font-size: 12px;
+  color: #7f92a6;
+  background: rgba(255, 255, 255, 0.045);
+  border-radius: 7px;
+  place-items: center;
+}
+
+.nav-item.active .nav-icon {
+  color: #5eead4;
+  background: rgba(45, 212, 191, 0.12);
+}
+
+.nav-title {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.nav-hint {
+  font-family: "Manrope Variable", "Segoe UI", sans-serif;
+  font-size: 7.5px;
+  letter-spacing: 0.5px;
+  color: #586a7e;
+}
+
+.nav-item.active .nav-hint {
+  color: #66a99f;
+}
+
 .intro {
-  padding: 25px 8px 22px;
-  margin-top: 20px;
+  padding: 20px 8px 18px;
+  margin-top: 15px;
   border-top: 1px solid rgba(255, 255, 255, 0.075);
 }
 

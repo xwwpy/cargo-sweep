@@ -36,3 +36,28 @@ export interface DeleteResult {
   failures: DeleteFailure[];
   elapsedMs: number;
 }
+
+export interface NamedCargoSource {
+  name: string;
+  index: string;
+  kind: string;
+}
+
+export interface CargoSourceStatus {
+  cargoHome: string;
+  configPath: string;
+  configDir: string;
+  configExists: boolean;
+  cargoVersion: string | null;
+  currentName: string;
+  currentIndex: string;
+  currentIsOfficial: boolean;
+  replaceWith: string | null;
+  configuredSources: NamedCargoSource[];
+  warning: string | null;
+}
+
+export interface ApplyCargoSourceResult {
+  backupPath: string | null;
+  status: CargoSourceStatus;
+}

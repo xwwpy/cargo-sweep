@@ -22,6 +22,7 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 - 按项目查看：项目名、完整 target 路径、占用空间、文件数、最近构建时间
 - 一键打开：在文件资源管理器中直接打开选中的 target 目录
 - 清爽路径：自动移除 Windows 规范化路径的 `\\?\` 前缀
+- Cargo 源管理：自动检测当前全局下载源，内置常见镜像并支持自定义源
 - 快速筛选：按项目名或路径实时搜索
 - 三种清理方式：
   - 单条「清理」
@@ -38,9 +39,9 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 | --- | --- |
 | ![清理确认](docs/delete-dialog.png) | ![自动更新](docs/update.png) |
 
-| 扫描进行中 |
-| --- |
-| ![扫描进度](docs/scanning.png) |
+| 扫描进行中 | Cargo 下载源 |
+| --- | --- |
+| ![扫描进度](docs/scanning.png) | ![Cargo 下载源](docs/sources.png) |
 
 > 截图使用浏览器演示模式与内置演示数据，不代表本机真实项目路径。
 
@@ -49,7 +50,7 @@ Cargo Sweep 是一个基于 Tauri 2 的桌面应用。它会遍历你指定的�
 | 层 | 技术 |
 | --- | --- |
 | 桌面壳 | Tauri 2 |
-| 后端 | Rust 2021、WalkDir、Rayon、Toml |
+| 后端 | Rust 2021、WalkDir、Rayon、Toml、toml_edit |
 | 前端 | Vue 3 + TypeScript + Vite 8 |
 | 组件库 | Element Plus 2 |
 | 字体 | Manrope Variable |
@@ -132,8 +133,8 @@ pnpm tauri build --bundles nsis
 
 ```bash
 git add .
-git commit -m "release: v0.2.2"
-git tag v0.2.2
+git commit -m "release: v0.3.0"
+git tag v0.3.0
 git push origin main --tags
 ```
 
@@ -141,6 +142,29 @@ git push origin main --tags
    `latest.json`，同时打包免安装版和带临时目录修复的安装脚本。
 
 > 如果私钥丢失，已发布版本将无法再收到更新。请把私钥和密码（如有）备份到安全位置。
+
+## Cargo 下载源管理
+
+侧栏的「Cargo 下载源」页面会自动读取全局 Cargo 配置（默认
+`%USERPROFILE%\.cargo\config.toml`，也支持 `CARGO_HOME`），解析
+`[source.crates-io] replace-with` 并展示当前实际使用的索引。
+
+内置镜像：
+
+- crates.io 官方
+- RsProxy
+- 中科大 USTC
+- 清华 TUNA
+- 阿里云
+- 上海交大 SJTUG
+
+切换时会使用 `toml_edit` 只修改 `[source.crates-io]` 和 Cargo Sweep 管理的
+`[source.cargo-sweep-managed]`，保留其他 Cargo 配置与注释；写入前自动生成
+`config.toml.cargo-sweep-backup-<时间戳>` 备份。页面也支持填写自定义
+`sparse+https://` 或 `https://` 索引地址，并将自定义项保存在本地。
+
+> 此处只修改全局配置。项目内的 `.cargo/config.toml` 优先级更高；如果项目目录中有单独
+> 配置，它可能会覆盖这里的选择。
 
 ## 使用方式
 
@@ -150,6 +174,7 @@ git push origin main --tags
 4. 点击项目行右侧的目录图标，可以直接打开对应的 target 目录。
 5. 点击单行的「清理」，或勾选多行后点击「删除所选」，也可以直接「一键清理」。
 6. 在确认弹窗中检查目录与预计释放空间，确认后执行删除。
+7. 打开侧栏「Cargo 下载源」，检测当前源，选择镜像或自定义源后应用切换。
 
 下次执行 `cargo build` 时，Cargo 会按需重新生成 `target`，不会影响源码。
 
@@ -210,6 +235,8 @@ Error writing temporary file. Make sure your temp folder is valid.
 | `default_scan_roots` | 返回首次启动时建议的扫描目录 |
 | `scan_targets` | 扫描根目录，返回 target 列表、文件数、大小和耗时，并发送进度事件 |
 | `delete_targets` | 校验并删除指定 target，返回释放空间与失败列表 |
+| `detect_cargo_source` | 读取全局 Cargo 配置并解析当前下载源 |
+| `apply_cargo_source` | 备份并切换 Cargo 下载源 |
 | `open_folder` | 在系统文件管理器中打开指定目录 |
 
 前端通过 Tauri 事件 `scan-progress` 接收扫描阶段、当前根目录和已发现数量。
@@ -224,10 +251,11 @@ cargo-sweep/
 │  ├─ api.ts                      # Tauri invoke / 事件 / 目录选择封装
 │  ├─ composables/useUpdater.ts   # 检查、下载、安装与重启
 │  ├─ components/
-│  │  ├─ SidebarPanel.vue         # 扫描范围与更新入口
+│  │  ├─ SidebarPanel.vue         # 页面导航、扫描范围与更新入口
 │  │  ├─ SummaryCards.vue         # 空间、文件、最近扫描统计
-│  │  ├─ TargetTable.vue          # 搜索、多选、单条/批量清理
+│  │  ├─ TargetTable.vue          # 搜索、多选、打开目录与清理
 │  │  ├─ DeleteDialog.vue         # 删除确认
+│  │  ├─ CargoSourcePage.vue      # 下载源检测、切换与自定义
 │  │  ├─ UpdateBanner.vue         # 新版本横幅
 │  │  └─ UpdateDialog.vue         # 更新详情与下载进度
 │  ├─ lib/format.ts               # 字节、时间和路径格式化
@@ -237,6 +265,7 @@ cargo-sweep/
 ├─ scripts/fix-updater-notes.mjs  # 修正更新清单的 UTF-8 发布说明
 ├─ src-tauri/
 │  ├─ src/scanner.rs              # 扫描、测量、校验、删除与单元测试
+│  ├─ src/cargo_source.rs         # Cargo 源检测、备份与切换
 │  ├─ src/lib.rs                  # Tauri 命令与插件注册
 │  ├─ tauri.conf.json             # 更新源与签名公钥
 │  └─ capabilities/default.json
