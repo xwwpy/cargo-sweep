@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+release/
+.packaging/
+src-tauri/target/
+src-tauri/gen/
+
+# Secrets and local environment
+.secrets/
+.env
+.env.*
+*.pem
+*.key
+
+# Local tooling
+*.local
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

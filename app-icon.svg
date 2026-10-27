@@ -1,0 +1,38 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="102" y1="58" x2="910" y2="964" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#101B2D"/>
+      <stop offset="0.55" stop-color="#0B1220"/>
+      <stop offset="1" stop-color="#070D18"/>
+    </linearGradient>
+    <linearGradient id="mint" x1="398" y1="358" x2="610" y2="604" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6FF7DF"/>
+      <stop offset="0.48" stop-color="#2DD4BF"/>
+      <stop offset="1" stop-color="#0F766E"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(512 486) rotate(90) scale(450)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2DD4BF" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#2DD4BF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="112" y="128" width="816" height="816" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="28" stdDeviation="38" flood-color="#020617" flood-opacity="0.46"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="228" fill="url(#bg)"/>
+  <rect x="14" y="14" width="996" height="996" rx="216" stroke="#E6FFF9" stroke-opacity="0.08" stroke-width="4"/>
+  <circle cx="512" cy="486" r="440" fill="url(#glow)"/>
+
+  <g filter="url(#shadow)">
+    <circle cx="500" cy="486" r="278" stroke="#E9FBF5" stroke-width="58" stroke-linecap="round"
+            stroke-dasharray="1370 377" transform="rotate(-38 500 486)"/>
+    <circle cx="500" cy="486" r="172" stroke="#7DE8D5" stroke-opacity="0.24" stroke-width="22"/>
+    <circle cx="500" cy="486" r="104" fill="url(#mint)"/>
+    <circle cx="500" cy="486" r="30" fill="#F0FFFB"/>
+  </g>
+
+  <path d="M812 788C874 724 912 640 932 546" stroke="#2DD4BF" stroke-width="46" stroke-linecap="round" opacity="0.92"/>
+  <path d="M744 840C816 792 866 726 894 650" stroke="#D9FBF3" stroke-width="22" stroke-linecap="round" opacity="0.34"/>
+  <path d="M816 250L833 295L878 312L833 329L816 374L799 329L754 312L799 295L816 250Z" fill="#EAFFF9" opacity="0.93"/>
+  <circle cx="902" cy="386" r="14" fill="#9BF2E3" opacity="0.44"/>
+</svg>

@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Cargo Sweep v__VERSION__
+          releaseBody: |
+            ### Cargo Sweep v__VERSION__
+
+            - 全新 Ink & Mint 界面配色
+            - 新增 GitHub Releases 自动更新
+            - 修复 Windows 临时目录导致安装失败的问题
+            - 优化扫描进度、表格与清理确认体验
+
+            **首次安装**：下载 `Cargo-Sweep-__VERSION__-installer-x64.zip`，解压后双击
+            `INSTALL-CARGO-SWEEP.cmd`，不要直接运行 setup.exe。
+
+            **免安装版**：下载 `Cargo-Sweep-__VERSION__-portable-x64.zip`，解压后双击
+            `START-CARGO-SWEEP.cmd`。
+
+            安装包未签名，Windows 可能提示“未知发布者”。
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          args: --bundles nsis
+
+      - name: Package portable and installer wrapper
+        shell: pwsh
+        run: ./scripts/package-release.ps1
+
+      - name: Upload additional release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw -Encoding UTF8 | ConvertFrom-Json).version
+          $tag = "v$version"
+          Get-ChildItem release -Filter "*.zip" | ForEach-Object {
+            gh release upload $tag $_.FullName --clobber
+          }
+          gh release upload $tag release/SHA256SUMS.txt --clobber
