@@ -372,6 +372,50 @@ pub fn update(target: Option<String>) -> Result<ToolchainOperationResult, String
     })
 }
 
+pub fn uninstall(target: String) -> Result<ToolchainOperationResult, String> {
+    let target = validate_target(&target)?;
+    let before = detect()?;
+    let toolchain = before
+        .toolchains
+        .iter()
+        .find(|toolchain| toolchain.name == target)
+        .ok_or_else(|| format!("未找到工具链 {target}。"))?;
+    if toolchain.default || toolchain.active {
+        return Err("默认工具链不能直接删除，请先切换到其他工具链。".into());
+    }
+    if before.toolchains.len() <= 1 {
+        return Err("至少需要保留一个 Rust 工具链。".into());
+    }
+
+    let mut command = Command::new("rustup");
+    command.args(["toolchain", "uninstall", &target]);
+    apply_no_window(&mut command);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = command
+        .output()
+        .map_err(|error| format!("无法启动 rustup toolchain uninstall：{error}"))?;
+    let success = output.status.success();
+    let text = clean_output(&format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    ));
+    let status = detect().unwrap_or(before);
+    Ok(ToolchainOperationResult {
+        success,
+        output: if text.trim().is_empty() {
+            if success {
+                format!("已删除工具链 {target}")
+            } else {
+                format!("删除工具链 {target} 失败。")
+            }
+        } else {
+            text.trim().to_string()
+        },
+        status,
+    })
+}
+
 pub fn set_rustup_path(path: String) -> Result<RustToolchainStatus, String> {
     let trimmed = path.trim().trim_matches('"').trim_matches('\'');
     let custom_path = if trimmed.is_empty() {

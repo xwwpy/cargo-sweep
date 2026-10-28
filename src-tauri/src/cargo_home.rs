@@ -284,6 +284,43 @@ fn migrate_home(
     })
 }
 
+pub fn set_home_path(kind: &str, target: String) -> Result<CargoHomeStatus, String> {
+    let kind = match kind {
+        "cargo" => HomeKind::Cargo,
+        "rustup" => HomeKind::Rustup,
+        _ => return Err("未知的存储位置类型。".into()),
+    };
+    let before = home_status(kind)?;
+    let default = kind.default_path()?;
+    let current = PathBuf::from(&before.current);
+    let target = expand_tilde(&target);
+    if !target.is_absolute() {
+        return Err(format!("请选择绝对路径作为新的 {}。", kind.label()));
+    }
+    if same_path(&target, &current) {
+        return Err(format!("新目录与当前 {} 相同。", kind.label()));
+    }
+    if same_path(&target, &default) {
+        return Err(format!("新目录不能是默认的 ~/{}。", kind.default_name()));
+    }
+    if target.exists() {
+        if !target.is_dir() {
+            return Err("目标位置不是目录。".into());
+        }
+    } else {
+        fs::create_dir_all(&target)
+            .map_err(|error| format!("无法创建新的 {}：{error}", kind.label()))?;
+    }
+
+    set_home_environment(kind, &target)?;
+    env::set_var(kind.env_var(), &target);
+    if matches!(kind, HomeKind::Cargo) {
+        prepend_path(&target.join("bin"));
+    }
+    let _ = save_home(kind, &target);
+    status()
+}
+
 pub fn apply_saved_homes() {
     apply_saved_home(HomeKind::Cargo);
     apply_saved_home(HomeKind::Rustup);

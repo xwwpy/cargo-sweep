@@ -158,6 +158,23 @@ export async function demoMigrateCargoHome(
   };
 }
 
+export async function demoSetHomePath(
+  kind: "cargo" | "rustup",
+  target: string,
+): Promise<CargoHomeStatus> {
+  await new Promise((resolve) => window.setTimeout(resolve, 500));
+  if (kind === "cargo") {
+    demoCargoHome = target;
+    demoCargoHomeEnvSet = true;
+    demoCargoHomeLinkTarget = null;
+  } else {
+    demoRustupHome = target;
+    demoRustupHomeEnvSet = true;
+    demoRustupHomeLinkTarget = null;
+  }
+  return demoCargoHomeStatus();
+}
+
 export async function demoMigrateRustupHome(
   target: string,
   createLink: boolean,
@@ -189,30 +206,34 @@ let demoRustupPath = demoRustupInstalled ? "/Users/demo/.cargo/bin/rustup" : nul
 let demoCustomRustupPath: string | null = null;
 let demoStable = "1.99.1";
 let demoNightly = "1.101.0";
+let demoStableInstalled = demoInstalled;
+let demoNightlyInstalled = demoInstalled;
 let demoDefault = "stable";
 const demoPinned = new Map<string, string>([["1.98.0", "1.98.0"]]);
 
 function demoToolchains() {
-  if (!demoInstalled) {
-    return [];
-  }
-  return [
-    {
+  const toolchains = [];
+  if (demoStableInstalled) {
+    toolchains.push({
       name: `stable-${DEMO_HOST}`,
       channel: "stable",
       release: demoStable,
       rustcVersion: `rustc ${demoStable} (demo build)`,
       active: demoDefault === "stable",
       default: demoDefault === "stable",
-    },
-    {
+    });
+  }
+  if (demoNightlyInstalled) {
+    toolchains.push({
       name: `nightly-${DEMO_HOST}`,
       channel: "nightly",
       release: demoNightly,
       rustcVersion: `rustc ${demoNightly}-nightly (demo build)`,
       active: demoDefault === "nightly",
       default: demoDefault === "nightly",
-    },
+    });
+  }
+  toolchains.push(
     ...[...demoPinned.entries()].map(([version]) => ({
       name: `${version}-${DEMO_HOST}`,
       channel: "pinned",
@@ -221,7 +242,8 @@ function demoToolchains() {
       active: demoDefault === version,
       default: demoDefault === version,
     })),
-  ];
+  );
+  return toolchains;
 }
 
 function demoToolchainStatus(): RustToolchainStatus {
@@ -239,6 +261,7 @@ function demoToolchainStatus(): RustToolchainStatus {
     };
   });
   const active = toolchains.find((toolchain) => toolchain.active);
+  demoInstalled = toolchains.length > 0;
   return {
     installed: demoInstalled,
     rustupInstalled: demoRustupInstalled,
@@ -278,6 +301,7 @@ export async function demoInstallRustup(): Promise<RustToolchainOperationResult>
   demoRustupInstalled = true;
   demoRustupPath = "/Users/demo/.cargo/bin/rustup";
   demoInstalled = true;
+  demoStableInstalled = true;
   demoStable = "1.101.0";
   demoDefault = "stable";
   return demoOperation(
@@ -337,10 +361,12 @@ export async function demoInstallRustToolchain(
   await new Promise((resolve) => window.setTimeout(resolve, 1400));
   if (target === "stable") {
     demoStable = "1.101.0";
+    demoStableInstalled = true;
     demoDefault = setDefault || !demoInstalled ? "stable" : demoDefault;
     demoInstalled = true;
   } else if (target === "nightly") {
     demoNightly = "1.103.0";
+    demoNightlyInstalled = true;
     demoDefault = setDefault || !demoInstalled ? "nightly" : demoDefault;
     demoInstalled = true;
   } else {
@@ -357,6 +383,21 @@ export async function demoInstallRustToolchain(
       `info: default toolchain set to '${demoDefault}-${DEMO_HOST}'`,
     ].join("\n"),
   );
+}
+
+export async function demoUninstallRustToolchain(
+  target: string,
+): Promise<RustToolchainOperationResult> {
+  await new Promise((resolve) => window.setTimeout(resolve, 900));
+  if (target.startsWith("stable-")) {
+    demoStableInstalled = false;
+  } else if (target.startsWith("nightly-")) {
+    demoNightlyInstalled = false;
+  } else {
+    const version = target.split("-")[0];
+    demoPinned.delete(version);
+  }
+  return demoOperation(`info: toolchain '${target}' uninstalled`);
 }
 
 export async function demoSetDefaultRustToolchain(

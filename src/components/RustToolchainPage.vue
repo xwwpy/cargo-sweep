@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import {
   CircleCheck,
   Clock,
   Cpu,
+  Delete,
   Download,
   InfoFilled,
   Refresh,
@@ -23,11 +24,14 @@ import {
   pickCargoHomeFolder,
   pickRustupHomeFolder,
   setDefaultRustToolchain,
+  setHomePath,
   setRustupPath,
+  uninstallRustToolchain,
   updateRustToolchain,
 } from "../api";
 import type {
   CargoHomeStatus,
+  InstalledRustToolchain,
   LatestRustToolchain,
   LatestRustVersions,
   RustChannel,
@@ -109,7 +113,14 @@ const currentIsLatest = computed(() => {
 const historyOptions = computed(() => latest.value?.historicalVersions ?? []);
 const installedToolchains = computed(() => status.value?.toolchains ?? []);
 const busyLabel = computed(() => busy.value ?? "");
-const environmentRows = computed(() => {
+const environmentRows = computed<
+  {
+    name: string;
+    value: string;
+    note: string;
+    setKind: "cargo" | "rustup" | null;
+  }[]
+>(() => {
   if (!cargoHome.value) {
     return [];
   }
@@ -118,6 +129,7 @@ const environmentRows = computed(() => {
       name: "PATH",
       value: cargoHome.value.cargoBin,
       note: cargoHome.value.pathContainsCargoBin ? "已包含" : "安装/迁移后追加",
+      setKind: null,
     },
     {
       name: "CARGO_HOME",
@@ -128,6 +140,7 @@ const environmentRows = computed(() => {
           : cargoHome.value.source === "app"
             ? "应用配置"
             : "默认路径",
+      setKind: cargoHome.value.source === "default" ? ("cargo" as const) : null,
     },
     {
       name: "RUSTUP_HOME",
@@ -138,6 +151,8 @@ const environmentRows = computed(() => {
           : cargoHome.value.rustup.source === "app"
             ? "应用配置"
             : "默认路径",
+      setKind:
+        cargoHome.value.rustup.source === "default" ? ("rustup" as const) : null,
     },
   ];
 });
@@ -453,6 +468,77 @@ async function runRustupHomeMigration() {
   }
 }
 
+async function chooseHomeLocation(kind: "cargo" | "rustup") {
+  const selected =
+    kind === "cargo"
+      ? await pickCargoHomeFolder()
+      : await pickRustupHomeFolder();
+  if (!selected) {
+    return;
+  }
+  const label = kind === "cargo" ? "CARGO_HOME" : "RUSTUP_HOME";
+  try {
+    await ElMessageBox.confirm(
+      `将 ${label} 设置为 ${selected}？\n\n仅更新环境配置，不会自动复制现有数据。旧目录数据会保留，可稍后通过“更改 ${label}”迁移。`,
+      `设置 ${label}`,
+      {
+        type: "warning",
+        confirmButtonText: "保存配置",
+        cancelButtonText: "取消",
+      },
+    );
+  } catch {
+    return;
+  }
+  if (busy.value) {
+    return;
+  }
+  busy.value = `configure-${kind}`;
+  actionOutput.value = null;
+  actionSuccess.value = null;
+  startTimer();
+  try {
+    const next = await setHomePath(kind, selected);
+    cargoHome.value = next;
+    actionOutput.value = `已更新 ${label} 配置：${selected}`;
+    actionSuccess.value = true;
+    ElMessage.success(`${label} 配置已更新`);
+    await load();
+  } catch (reason) {
+    actionOutput.value = errorMessage(reason);
+    actionSuccess.value = false;
+    ElMessage.error("更新配置失败，请查看日志");
+  } finally {
+    stopTimer();
+    busy.value = null;
+  }
+}
+
+async function removeToolchain(toolchain: InstalledRustToolchain) {
+  if (toolchain.default || toolchain.active) {
+    ElMessage.warning("默认工具链不能直接删除，请先切换到其他工具链");
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      `删除工具链 ${toolchain.name}？此操作会移除对应的 Rust 工具链文件。`,
+      "删除工具链",
+      {
+        type: "warning",
+        confirmButtonText: "删除",
+        cancelButtonText: "取消",
+      },
+    );
+  } catch {
+    return;
+  }
+  await runOperation(
+    `uninstall-${toolchain.name}`,
+    () => uninstallRustToolchain(toolchain.name),
+    "工具链已删除",
+  );
+}
+
 async function installChannel(view: ChannelView) {
   const setDefault = !status.value?.installed || !status.value?.defaultToolchain;
   await runOperation(
@@ -674,6 +760,15 @@ onUnmounted(stopTimer);
               <span>{{ row.note }}</span>
             </div>
             <p>{{ row.value }}</p>
+            <button
+              v-if="row.setKind"
+              class="env-configure"
+              type="button"
+              title="通过文件夹选择器更新配置，不迁移现有数据"
+              @click="chooseHomeLocation(row.setKind)"
+            >
+              设置位置
+            </button>
           </div>
         </div>
 
@@ -870,6 +965,25 @@ onUnmounted(stopTimer);
               @click="switchToolchain(toolchain.name)"
             >
               设为默认
+            </el-button>
+            <el-button
+              v-if="!toolchain.default && !toolchain.active"
+              class="row-delete"
+              text
+              :disabled="Boolean(busy)"
+              title="删除工具链"
+              @click="removeToolchain(toolchain)"
+            >
+              <el-icon><Delete /></el-icon>
+            </el-button>
+            <el-button
+              v-else
+              class="row-delete"
+              text
+              disabled
+              title="默认或当前工具链不能删除，请先切换到其他工具链"
+            >
+              <el-icon><Delete /></el-icon>
             </el-button>
           </div>
         </div>
@@ -1516,6 +1630,21 @@ onUnmounted(stopTimer);
   white-space: nowrap;
 }
 
+.env-configure {
+  padding: 0;
+  margin-top: 5px;
+  font-size: 8px;
+  color: #0f766e;
+  text-decoration: underline;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+
+.env-configure:hover {
+  color: #115e59;
+}
+
 .link-detail {
   display: flex;
   gap: 6px;
@@ -2011,6 +2140,18 @@ onUnmounted(stopTimer);
   padding: 0 5px;
   font-size: 8.5px;
   color: #667085;
+}
+
+.row-delete {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  font-size: 13px;
+  color: #98a2b3;
+}
+
+.row-delete:hover {
+  color: #d92d20;
 }
 
 .action-console {

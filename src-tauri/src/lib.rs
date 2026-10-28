@@ -150,6 +150,13 @@ async fn migrate_rustup_home(
 }
 
 #[tauri::command]
+async fn set_home_path(kind: String, target: String) -> Result<CargoHomeStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || cargo_home::set_home_path(&kind, target))
+        .await
+        .map_err(|error| format!("更新存储位置任务异常退出：{error}"))?
+}
+
+#[tauri::command]
 fn probe_rust_installation() -> RustInstallationProbe {
     rust_toolchain::probe()
 }
@@ -223,6 +230,13 @@ async fn update_rust_toolchain(target: Option<String>) -> Result<ToolchainOperat
 }
 
 #[tauri::command]
+async fn uninstall_rust_toolchain(target: String) -> Result<ToolchainOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || rust_toolchain::uninstall(target))
+        .await
+        .map_err(|error| format!("删除 Rust 工具链任务异常退出：{error}"))?
+}
+
+#[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
     let folder = std::path::PathBuf::from(&path);
     if !folder.is_dir() {
@@ -268,6 +282,7 @@ pub fn run() {
             cargo_home_status,
             migrate_cargo_home,
             migrate_rustup_home,
+            set_home_path,
             detect_cargo_source,
             apply_cargo_source,
             probe_rust_installation,
@@ -279,6 +294,7 @@ pub fn run() {
             install_rust_toolchain,
             set_default_rust_toolchain,
             update_rust_toolchain,
+            uninstall_rust_toolchain,
             open_folder
         ])
         .run(tauri::generate_context!());

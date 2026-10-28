@@ -764,6 +764,18 @@ html.dark .env-item p {
   color: #7f8ea3;
 }
 
+html.dark .env-configure {
+  color: #5eead4;
+}
+
+html.dark .row-delete {
+  color: #7f8ea3;
+}
+
+html.dark .row-delete:hover {
+  color: #f97066;
+}
+
 html.dark .link-detail {
   color: #94a3b8;
   background: #0d2b2a;

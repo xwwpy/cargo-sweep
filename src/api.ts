@@ -26,6 +26,8 @@ import {
   demoMigrateRustupHome,
   demoPickCargoHomeFolder,
   demoPickRustupHomeFolder,
+  demoSetHomePath,
+  demoUninstallRustToolchain,
   demoProbeRustInstallation,
   demoRoots,
   demoRustToolchainStatus,
@@ -150,6 +152,19 @@ export async function pickCargoHomeFolder(): Promise<string | null> {
   return typeof selection === "string" ? selection : null;
 }
 
+export async function setHomePath(
+  kind: "cargo" | "rustup",
+  target: string,
+): Promise<CargoHomeStatus> {
+  if (isDemoMode()) {
+    return demoSetHomePath(kind, target);
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<CargoHomeStatus>("set_home_path", { kind, target });
+}
+
 export async function pickRustupHomeFolder(): Promise<string | null> {
   if (isDemoMode()) {
     return demoPickRustupHomeFolder();
@@ -238,6 +253,20 @@ export async function installRustToolchain(
   return invoke<RustToolchainOperationResult>("install_rust_toolchain", {
     target,
     setDefault,
+  });
+}
+
+export async function uninstallRustToolchain(
+  target: string,
+): Promise<RustToolchainOperationResult> {
+  if (isDemoMode()) {
+    return demoUninstallRustToolchain(target);
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<RustToolchainOperationResult>("uninstall_rust_toolchain", {
+    target,
   });
 }
 
