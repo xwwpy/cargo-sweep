@@ -4,9 +4,9 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use toml::Value;
 
 #[derive(Debug, Clone, Serialize)]
@@ -258,7 +258,10 @@ pub fn latest() -> Result<LatestRustVersions, String> {
 
     let stable = stable.ok();
     let nightly = nightly.ok();
-    let historical_versions = stable.as_ref().map(historical_versions).unwrap_or_default();
+    let historical_versions = stable
+        .as_ref()
+        .map(|release| fetch_historical_versions(&release.release))
+        .unwrap_or_default();
 
     if stable.is_none() && nightly.is_none() {
         return Err(if errors.is_empty() {
@@ -294,8 +297,14 @@ where
         percent: 2,
         message: format!("准备下载 {target}"),
     });
+    let is_versioned = target
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_digit());
+    let custom_source =
+        env::var_os("RUSTUP_DIST_SERVER").is_some() || env::var_os("RUSTUP_UPDATE_ROOT").is_some();
     let mut progress = RustupProgress::default();
-    let (success, mut text) = run_streaming(
+    let (mut success, mut text) = run_streaming(
         "rustup",
         &["toolchain", "install", &target, "--profile", "default"],
         |line| {
@@ -304,6 +313,30 @@ where
             }
         },
     )?;
+
+    if !success && is_versioned && custom_source {
+        on_progress(OperationProgress {
+            percent: 5,
+            message: "当前下载源缺少该版本，改用官方源重试".into(),
+        });
+        let mut fallback_progress = RustupProgress::default();
+        let (fallback_success, fallback_text) = run_streaming_with_env(
+            "rustup",
+            &["toolchain", "install", &target, "--profile", "default"],
+            &["RUSTUP_DIST_SERVER", "RUSTUP_UPDATE_ROOT"],
+            |line| {
+                if let Some(next) = fallback_progress.observe(line) {
+                    on_progress(next);
+                }
+            },
+        )?;
+        success = fallback_success;
+        text = if fallback_text.trim().is_empty() {
+            format!("{text}\n\n[已改用官方源重试] 未返回输出。")
+        } else {
+            format!("{text}\n\n[已改用官方源重试]\n{fallback_text}")
+        };
+    }
 
     if success && (set_default || before.default_toolchain.is_none()) {
         on_progress(OperationProgress {
@@ -970,19 +1003,89 @@ fn split_manifest_version(version: &str) -> (String, Option<String>) {
     (release, date)
 }
 
-fn historical_versions(stable: &LatestRustToolchain) -> Vec<String> {
-    let mut parts = stable.release.split('.');
-    let major = parts.next().and_then(|value| value.parse::<u32>().ok());
-    let minor = parts.next().and_then(|value| value.parse::<u32>().ok());
-    let (Some(major), Some(minor)) = (major, minor) else {
+type HistoryCache = Option<(String, Instant, Vec<String>)>;
+
+static HISTORY_CACHE: OnceLock<Mutex<HistoryCache>> = OnceLock::new();
+
+fn fetch_historical_versions(current_release: &str) -> Vec<String> {
+    let cache = HISTORY_CACHE.get_or_init(|| Mutex::new(None));
+    if let Ok(guard) = cache.lock() {
+        if let Some((release, fetched_at, versions)) = guard.as_ref() {
+            if release == current_release && fetched_at.elapsed() < Duration::from_secs(600) {
+                return versions.clone();
+            }
+        }
+    }
+
+    let versions = fetch_historical_versions_uncached(current_release);
+    if let Ok(mut guard) = cache.lock() {
+        *guard = Some((
+            current_release.to_string(),
+            Instant::now(),
+            versions.clone(),
+        ));
+    }
+    versions
+}
+
+fn fetch_historical_versions_uncached(current_release: &str) -> Vec<String> {
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .user_agent(format!("cargo-sweep/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return Vec::new(),
+    };
+    let response = match client
+        .get("https://api.github.com/repos/rust-lang/rust/releases?per_page=20")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+    {
+        Ok(response) if response.status().is_success() => response,
+        _ => return Vec::new(),
+    };
+    let Ok(releases) = response.json::<serde_json::Value>() else {
         return Vec::new();
     };
-    (0..8)
-        .filter_map(|offset| {
-            let minor = minor.checked_sub(offset)?;
-            Some(format!("{major}.{minor}.0"))
-        })
-        .collect()
+    let Some(releases) = releases.as_array() else {
+        return Vec::new();
+    };
+
+    let mut versions = Vec::new();
+    for release in releases {
+        if release.get("draft").and_then(serde_json::Value::as_bool) == Some(true)
+            || release
+                .get("prerelease")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+        {
+            continue;
+        }
+        let Some(tag) = release.get("tag_name").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if tag == current_release || parse_stable_release(tag).is_none() {
+            continue;
+        }
+        if !versions.iter().any(|version| version == tag) {
+            versions.push(tag.to_string());
+        }
+    }
+    versions.sort_by_key(|version| std::cmp::Reverse(parse_stable_release(version)));
+    versions.truncate(8);
+    versions
+}
+
+fn parse_stable_release(value: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = value.split('.');
+    let major = parts.next()?.parse::<u32>().ok()?;
+    let minor = parts.next()?.parse::<u32>().ok()?;
+    let patch = parts.next()?.parse::<u32>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
 }
 
 fn validate_target(target: &str) -> Result<String, String> {
@@ -1055,12 +1158,27 @@ fn line_percentage(line: &str) -> Option<u8> {
         .find_map(|token| token.strip_suffix('%')?.parse::<u8>().ok())
 }
 
-fn run_streaming<F>(program: &str, args: &[&str], mut on_line: F) -> Result<(bool, String), String>
+fn run_streaming<F>(program: &str, args: &[&str], on_line: F) -> Result<(bool, String), String>
+where
+    F: FnMut(&str),
+{
+    run_streaming_with_env(program, args, &[], on_line)
+}
+
+fn run_streaming_with_env<F>(
+    program: &str,
+    args: &[&str],
+    remove_env: &[&str],
+    mut on_line: F,
+) -> Result<(bool, String), String>
 where
     F: FnMut(&str),
 {
     let mut command = Command::new(program);
     command.args(args);
+    for name in remove_env {
+        command.env_remove(name);
+    }
     apply_no_window(&mut command);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|error| {
@@ -1378,15 +1496,10 @@ LLVM version: 23.1.1";
         let (release, date) = split_manifest_version("1.99.1 (58cf8f9c3 2026-10-13)");
         assert_eq!(release, "1.99.1");
         assert_eq!(date.as_deref(), Some("2026-10-13"));
-        let latest = LatestRustToolchain {
-            channel: "stable".into(),
-            version: "1.99.1 (58cf8f9c3 2026-10-13)".into(),
-            release: "1.99.1".into(),
-            date: Some("2026-10-13".into()),
-        };
-        let history = historical_versions(&latest);
-        assert!(history.contains(&"1.99.0".to_string()));
-        assert!(history.contains(&"1.92.0".to_string()));
+        assert_eq!(parse_stable_release("1.99.1"), Some((1, 99, 1)));
+        assert_eq!(parse_stable_release("1.98.0"), Some((1, 98, 0)));
+        assert_eq!(parse_stable_release("1.98"), None);
+        assert_eq!(parse_stable_release("1.98.0-beta.1"), None);
     }
 
     #[test]
