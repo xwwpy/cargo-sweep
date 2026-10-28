@@ -23,14 +23,33 @@ const headers = {
   "User-Agent": "cargo-sweep-release",
 };
 
-const releaseResponse = await fetch(
+let releaseResponse = await fetch(
   `https://api.github.com/repos/${repository}/releases/tags/${tag}`,
   { headers },
 );
-if (!releaseResponse.ok) {
+let release;
+if (releaseResponse.ok) {
+  release = await releaseResponse.json();
+} else if (releaseResponse.status === 404) {
+  // Draft releases are not returned by the tag endpoint; list releases with
+  // the token so the manifest can be generated before the release is public.
+  releaseResponse = await fetch(
+    `https://api.github.com/repos/${repository}/releases?per_page=100`,
+    { headers },
+  );
+  if (!releaseResponse.ok) {
+    throw new Error(
+      `Unable to list releases: ${releaseResponse.status}`,
+    );
+  }
+  const releases = await releaseResponse.json();
+  release = releases.find((candidate) => candidate.tag_name === tag);
+  if (!release) {
+    throw new Error(`Unable to find release ${tag}`);
+  }
+} else {
   throw new Error(`Unable to read release ${tag}: ${releaseResponse.status}`);
 }
-const release = await releaseResponse.json();
 const assets = release.assets;
 
 function findAsset(predicate, description) {
