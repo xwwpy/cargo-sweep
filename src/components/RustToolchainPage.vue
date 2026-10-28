@@ -45,6 +45,10 @@ import type {
   ToolchainProgress,
 } from "../types";
 
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), {
+  embedded: false,
+});
+
 interface ChannelView {
   key: "stable" | "nightly";
   label: string;
@@ -1163,8 +1167,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="toolchain-page">
-    <header class="toolchain-hero">
+  <section class="toolchain-page" :class="{ 'is-embedded': props.embedded }">
+    <header v-if="!props.embedded" class="toolchain-hero">
       <div>
         <span class="eyebrow"><i /> RUST TOOLCHAIN</span>
         <h1>工具链，<span>版本一目了然。</span></h1>
@@ -1175,6 +1179,17 @@ onUnmounted(() => {
         重新检测
       </el-button>
     </header>
+
+    <div v-else class="embedded-toolbar">
+      <div>
+        <span class="section-kicker">TOOLCHAINS</span>
+        <h2>版本与工具链</h2>
+      </div>
+      <el-button class="refresh-button" :loading="loading || latestLoading" @click="load">
+        <el-icon v-if="!loading && !latestLoading"><Refresh /></el-icon>
+        重新检测
+      </el-button>
+    </div>
 
     <div v-if="error" class="toolchain-error">
       <div class="error-icon"><el-icon><WarningFilled /></el-icon></div>
@@ -1928,6 +1943,35 @@ onUnmounted(() => {
 .toolchain-page {
   padding: 25px 2px 10px;
   animation: page-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.toolchain-page.is-embedded {
+  padding-top: 2px;
+}
+
+.embedded-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 2px 2px 12px;
+}
+
+.embedded-toolbar .section-kicker {
+  display: block;
+  margin-bottom: 2px;
+  font-family: "Manrope Variable", "Segoe UI", sans-serif;
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 1.7px;
+  color: #a78bfa;
+}
+
+.embedded-toolbar h2 {
+  margin: 0;
+  font-family: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 15px;
+  font-weight: 720;
+  color: var(--app-ink, #241a35);
 }
 
 .toolchain-hero {

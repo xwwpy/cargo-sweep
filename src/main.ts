@@ -7,5 +7,6 @@ import "element-plus/theme-chalk/dark/css-vars.css";
 import "./styles.css";
 import App from "./App.vue";
 import "./theme-dark.css";
+import "./styles-refresh.css";
 
 createApp(App).use(ElementPlus, { locale: zhCn }).mount("#app");

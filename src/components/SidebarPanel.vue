@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {
   Close,
-  Connection,
   Cpu,
   FolderOpened,
   Grid,
@@ -19,7 +18,7 @@ defineProps<{
   version: string;
   updateAvailable: boolean;
   checkingUpdates: boolean;
-  activePage: "targets" | "sources" | "toolchain";
+  activePage: "targets" | "rust";
   rustInstalled: boolean;
   isMac: boolean;
 }>();
@@ -28,7 +27,7 @@ defineEmits<{
   add: [];
   remove: [root: string];
   "check-update": [];
-  navigate: [page: "targets" | "sources" | "toolchain"];
+  navigate: [page: "targets" | "rust"];
   "allow-read": [];
 }>();
 </script>
@@ -55,68 +54,73 @@ defineEmits<{
         <span class="nav-hint">Targets</span>
       </button>
       <button
-        v-if="rustInstalled"
-        class="nav-item"
-        :class="{ active: activePage === 'sources' }"
+        class="nav-item nav-rust"
+        :class="{ active: activePage === 'rust' }"
         type="button"
-        @click="$emit('navigate', 'sources')"
-      >
-        <span class="nav-icon"><el-icon><Connection /></el-icon></span>
-        <span class="nav-title">Cargo 下载源</span>
-        <span class="nav-hint">Registry</span>
-      </button>
-      <button
-        class="nav-item"
-        :class="{ active: activePage === 'toolchain' }"
-        type="button"
-        @click="$emit('navigate', 'toolchain')"
+        @click="$emit('navigate', 'rust')"
       >
         <span class="nav-icon"><el-icon><Cpu /></el-icon></span>
-        <span class="nav-title">Rust 工具链</span>
-        <span class="nav-hint">Toolchain</span>
+        <span class="nav-title">Rust 环境</span>
+        <span class="nav-hint">Toolchain &amp; Registry</span>
       </button>
     </nav>
 
-    <div class="section-head">
-      <span>扫描范围</span>
-      <el-tooltip content="添加扫描目录" placement="right" :show-after="400">
-        <button class="icon-button" type="button" :disabled="scanning" @click="$emit('add')">
-          <el-icon><Plus /></el-icon>
-        </button>
-      </el-tooltip>
-    </div>
+    <template v-if="activePage === 'targets'">
+      <div class="section-head">
+        <span>扫描范围</span>
+        <el-tooltip content="添加扫描目录" placement="right" :show-after="400">
+          <button class="icon-button" type="button" :disabled="scanning" @click="$emit('add')">
+            <el-icon><Plus /></el-icon>
+          </button>
+        </el-tooltip>
+      </div>
 
-    <div class="root-list">
-      <div v-for="root in roots" :key="root" class="root-item">
-        <div class="root-icon">
-          <el-icon><FolderOpened /></el-icon>
+      <div class="root-list">
+        <div v-for="root in roots" :key="root" class="root-item">
+          <div class="root-icon">
+            <el-icon><FolderOpened /></el-icon>
+          </div>
+          <div class="root-copy">
+            <span class="root-name">{{ basename(root) }}</span>
+            <el-tooltip :content="cleanPath(root)" placement="bottom-start" :show-after="500">
+              <span class="root-path">{{ cleanPath(root) }}</span>
+            </el-tooltip>
+          </div>
+          <button
+            class="root-remove"
+            type="button"
+            aria-label="移除扫描目录"
+            :disabled="scanning"
+            @click="$emit('remove', root)"
+          >
+            <el-icon><Close /></el-icon>
+          </button>
         </div>
-        <div class="root-copy">
-          <span class="root-name">{{ basename(root) }}</span>
-          <el-tooltip :content="cleanPath(root)" placement="bottom-start" :show-after="500">
-            <span class="root-path">{{ cleanPath(root) }}</span>
-          </el-tooltip>
-        </div>
-        <button
-          class="root-remove"
-          type="button"
-          aria-label="移除扫描目录"
-          :disabled="scanning"
-          @click="$emit('remove', root)"
-        >
-          <el-icon><Close /></el-icon>
+
+        <button v-if="roots.length === 0" class="empty-root" type="button" @click="$emit('add')">
+          <span class="empty-root-plus"><el-icon><Plus /></el-icon></span>
+          <span>添加 Rust 项目目录</span>
         </button>
       </div>
 
-      <button v-if="roots.length === 0" class="empty-root" type="button" @click="$emit('add')">
-        <span class="empty-root-plus"><el-icon><Plus /></el-icon></span>
-        <span>添加 Rust 项目目录</span>
-      </button>
-    </div>
+      <div class="depth-note">
+        <el-icon><InfoFilled /></el-icon>
+        <span>递归 10 层</span>
+      </div>
+    </template>
 
-    <div class="depth-note">
-      <el-icon><InfoFilled /></el-icon>
-      <span>递归 10 层</span>
+    <div v-else class="rust-side">
+      <span class="rust-side-kicker">RUST WORKSPACE</span>
+      <div class="rust-side-status" :class="{ ready: rustInstalled }">
+        <span class="rust-side-dot" />
+        {{ rustInstalled ? "Rust 环境已就绪" : "等待安装工具链" }}
+      </div>
+      <div class="rust-side-list">
+        <div><span>工具链</span><strong>版本与更新</strong></div>
+        <div><span>下载源</span><strong>Cargo Registry</strong></div>
+        <div><span>存储</span><strong>HOME 与环境变量</strong></div>
+      </div>
+      <p>工具链、下载源与存储设置已合并到同一个 Rust 环境工作区。</p>
     </div>
 
     <button
@@ -132,21 +136,34 @@ defineEmits<{
 
     <div class="sidebar-spacer" />
 
-    <div class="safety-card">
+    <div class="safety-card" :class="{ 'rust-mode': activePage === 'rust' }">
       <div class="safety-icon">
-        <el-icon><Lock /></el-icon>
+        <el-icon><Cpu v-if="activePage === 'rust'" /><Lock v-else /></el-icon>
       </div>
       <div>
-        <h4>只删 target</h4>
-        <p>校验 Cargo.toml，跳过符号链接。</p>
+        <h4>{{ activePage === "rust" ? "一处配置" : "只删 target" }}</h4>
+        <p>
+          {{
+            activePage === "rust"
+              ? "工具链、下载源与存储设置集中管理。"
+              : "校验 Cargo.toml，跳过符号链接。"
+          }}
+        </p>
       </div>
     </div>
 
     <div class="sidebar-footer">
       <div class="footer-stats">
-        <span>{{ targetCount }} 个 target</span>
-        <i />
-        <span>{{ formatBytes(totalBytes) }}</span>
+        <template v-if="activePage === 'targets'">
+          <span>{{ targetCount }} 个 target</span>
+          <i />
+          <span>{{ formatBytes(totalBytes) }}</span>
+        </template>
+        <template v-else>
+          <span>Rust 环境</span>
+          <i />
+          <span>{{ rustInstalled ? "已安装" : "待安装" }}</span>
+        </template>
       </div>
       <button
         class="version"
@@ -518,6 +535,83 @@ defineEmits<{
   min-height: 24px;
 }
 
+.rust-side {
+  padding: 22px 8px 0;
+}
+
+.rust-side-kicker {
+  font-family: "Manrope Variable", "Segoe UI", sans-serif;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 1.9px;
+  color: #a68bbb;
+}
+
+.rust-side-status {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  padding: 9px 10px;
+  margin-top: 10px;
+  font-size: 9px;
+  color: #c7b4d7;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 11px;
+}
+
+.rust-side-status.ready {
+  color: #fbcfe8;
+  background: rgba(236, 72, 153, 0.11);
+  border-color: rgba(244, 114, 182, 0.18);
+}
+
+.rust-side-dot {
+  width: 5px;
+  height: 5px;
+  background: #a78bfa;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.12);
+}
+
+.rust-side-status.ready .rust-side-dot {
+  background: #f472b6;
+  box-shadow: 0 0 0 3px rgba(244, 114, 182, 0.14);
+  animation: blink 1.8s ease-in-out infinite;
+}
+
+.rust-side-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.rust-side-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 9px;
+  font-size: 8px;
+  color: #9984ab;
+  background: rgba(255, 255, 255, 0.028);
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  border-radius: 9px;
+}
+
+.rust-side-list strong {
+  font-size: 8px;
+  font-weight: 550;
+  color: #d8c5e5;
+}
+
+.rust-side p {
+  margin: 12px 0 0;
+  font-size: 8px;
+  line-height: 1.75;
+  color: #8f7ba1;
+}
+
 .safety-card {
   display: flex;
   gap: 11px;
@@ -525,6 +619,16 @@ defineEmits<{
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.022));
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 13px;
+}
+
+.safety-card.rust-mode {
+  background: linear-gradient(145deg, rgba(236, 72, 153, 0.12), rgba(139, 92, 246, 0.07));
+  border-color: rgba(244, 114, 182, 0.16);
+}
+
+.safety-card.rust-mode .safety-icon {
+  color: #f9a8d4;
+  background: rgba(236, 72, 153, 0.12);
 }
 
 .safety-icon {

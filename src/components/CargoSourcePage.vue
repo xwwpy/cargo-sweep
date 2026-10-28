@@ -21,6 +21,10 @@ import {
 import { cleanPath } from "../lib/format";
 import type { CargoSourceStatus } from "../types";
 
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), {
+  embedded: false,
+});
+
 interface SourceOption {
   id: string;
   name: string;
@@ -291,8 +295,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="source-page">
-    <header class="source-hero">
+  <section class="source-page" :class="{ 'is-embedded': props.embedded }">
+    <header v-if="!props.embedded" class="source-hero">
       <div>
         <span class="eyebrow"><i /> CARGO REGISTRY</span>
         <h1>下载源，<span>选一个更快的。</span></h1>
@@ -303,6 +307,17 @@ onMounted(() => {
         重新检测
       </el-button>
     </header>
+
+    <div v-else class="embedded-toolbar">
+      <div>
+        <span class="section-kicker">CARGO REGISTRY</span>
+        <h2>Cargo 下载源</h2>
+      </div>
+      <el-button class="refresh-button" :loading="loading" @click="refresh">
+        <el-icon v-if="!loading"><Refresh /></el-icon>
+        重新检测
+      </el-button>
+    </div>
 
     <div v-if="error" class="source-error">
       <div class="error-icon"><el-icon><WarningFilled /></el-icon></div>
@@ -489,6 +504,44 @@ onMounted(() => {
 .source-page {
   padding: 25px 2px 112px;
   animation: page-in 480ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.source-page.is-embedded {
+  padding-top: 2px;
+  padding-bottom: 20px;
+}
+
+.embedded-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 2px 2px 12px;
+}
+
+.embedded-toolbar .section-kicker {
+  display: block;
+  margin-bottom: 2px;
+  font-family: "Manrope Variable", "Segoe UI", sans-serif;
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 1.7px;
+  color: #a78bfa;
+}
+
+.embedded-toolbar h2 {
+  margin: 0;
+  font-family: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 15px;
+  font-weight: 720;
+  color: var(--app-ink, #241a35);
+}
+
+.source-page.is-embedded .apply-panel {
+  position: sticky;
+  right: auto;
+  bottom: 10px;
+  left: auto;
+  margin-top: 16px;
 }
 
 .source-hero {

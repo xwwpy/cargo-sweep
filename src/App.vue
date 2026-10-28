@@ -16,8 +16,7 @@ import SidebarPanel from "./components/SidebarPanel.vue";
 import SummaryCards from "./components/SummaryCards.vue";
 import TargetTable from "./components/TargetTable.vue";
 import DeleteDialog from "./components/DeleteDialog.vue";
-import CargoSourcePage from "./components/CargoSourcePage.vue";
-import RustToolchainPage from "./components/RustToolchainPage.vue";
+import RustEnvironmentPage from "./components/RustEnvironmentPage.vue";
 import UpdateBanner from "./components/UpdateBanner.vue";
 import UpdateDialog from "./components/UpdateDialog.vue";
 import { useTheme, type ThemeMode } from "./composables/useTheme";
@@ -51,15 +50,14 @@ const themeLabel = computed(() => {
   return themeMode.value === "dark" ? "深色" : "浅色";
 });
 
-const activePage = ref<"targets" | "sources" | "toolchain">("targets");
+const activePage = ref<"targets" | "rust">("targets");
 const rustInstalled = ref(false);
 const isMac = /Mac/i.test(navigator.userAgent);
 const pageTitle = computed(
   () =>
     ({
       targets: "空间总览",
-      sources: "Cargo 下载源",
-      toolchain: "Rust 工具链",
+      rust: "Rust 环境",
     })[activePage.value],
 );
 const mainRef = ref<HTMLElement | null>(null);
@@ -146,11 +144,8 @@ const syncLabel = computed(() => {
   return "待扫描";
 });
 
-async function updateRustInstallationState(installed: boolean) {
+function updateRustInstallationState(installed: boolean) {
   rustInstalled.value = installed;
-  if (!installed && activePage.value === "sources") {
-    activePage.value = "toolchain";
-  }
 }
 
 onMounted(async () => {
@@ -403,13 +398,9 @@ async function allowReadAccess() {
   }
 }
 
-function navigateTo(page: "targets" | "sources" | "toolchain") {
+function navigateTo(page: "targets" | "rust") {
   if (operationBusy.value && page !== activePage.value) {
-    ElMessage.warning("工具链操作进行中，请等待完成后再切换页面");
-    return;
-  }
-  if (page === "sources" && !rustInstalled.value) {
-    activePage.value = "toolchain";
+    ElMessage.warning("Rust 操作进行中，请等待完成后再切换页面");
     return;
   }
   if (page !== "targets") {
@@ -621,7 +612,9 @@ function uniqueRoots(list: string[]): string[] {
         </div>
       </div>
 
-      <template v-if="activePage === 'targets'">
+      <Transition name="page" mode="out-in">
+        <div :key="activePage" class="page-stage">
+          <template v-if="activePage === 'targets'">
         <header class="hero">
         <div class="hero-copy">
           <span class="eyebrow"><i /> CARGO TARGET CLEANER</span>
@@ -686,10 +679,15 @@ function uniqueRoots(list: string[]): string[] {
           @add="addRoots"
         />
         </section>
-      </template>
+          </template>
 
-      <CargoSourcePage v-else-if="activePage === 'sources' && rustInstalled" />
-      <RustToolchainPage v-else @rust-state="updateRustInstallationState" />
+          <RustEnvironmentPage
+            v-else
+            :rust-installed="rustInstalled"
+            @rust-state="updateRustInstallationState"
+          />
+        </div>
+      </Transition>
 
       <footer class="app-footer">
         <span class="footer-brand">Cargo Sweep · github.com/xwwpy/cargo-sweep</span>
@@ -697,13 +695,9 @@ function uniqueRoots(list: string[]): string[] {
           <i />
           校验 Cargo.toml · 跳过符号链接
         </span>
-        <span v-else-if="activePage === 'sources' && rustInstalled" class="footer-note">
-          <i />
-          切换前自动备份 Cargo 配置
-        </span>
         <span v-else class="footer-note">
           <i />
-          通过 rustup 更新活动工具链
+          Rust 工具链、下载源与存储集中管理
         </span>
       </footer>
     </main>
