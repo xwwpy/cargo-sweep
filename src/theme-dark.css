@@ -751,8 +751,13 @@ html.dark .source-head p,
 html.dark .source-preview span,
 html.dark .source-current > span,
 html.dark .source-current small,
-html.dark .source-hint {
+html.dark .source-hint,
+html.dark .source-backup-note {
   color: #7f8ea3;
+}
+
+html.dark .source-backup-note code {
+  color: #9fb0c4;
 }
 
 html.dark .source-current-badge {

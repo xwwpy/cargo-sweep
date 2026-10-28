@@ -1357,6 +1357,9 @@ onUnmounted(stopTimer);
         <p class="source-hint">
           写入用户环境变量；已打开的终端需要重新打开后才会使用新下载源。
         </p>
+        <p v-if="rustupSource?.backupPath" class="source-backup-note">
+          上次源配置已备份至 <code>{{ rustupSource?.backupPath }}</code>
+        </p>
       </section>
 
       <div v-else-if="rustupSourceError" class="cargo-home-error">
@@ -2730,6 +2733,21 @@ onUnmounted(stopTimer);
   font-size: 7.5px;
   color: #98a2b3;
   text-align: right;
+}
+
+.source-backup-note {
+  margin: 3px 0 0;
+  overflow: hidden;
+  font-size: 7.5px;
+  color: #98a2b3;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-backup-note code {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  color: #667085;
 }
 
 .channel-grid {

@@ -165,5 +165,6 @@ export interface RustupSourceStatus {
   distServer: string;
   updateRoot: string;
   envConfigured: boolean;
+  backupPath: string | null;
   mirrors: RustupMirror[];
 }

@@ -2,7 +2,6 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 use toml_edit::{value, DocumentMut, Item, Table};
 
 pub const OFFICIAL_INDEX: &str = "sparse+https://index.crates.io/";
@@ -292,22 +291,30 @@ fn backup_config(path: &Path) -> Result<Option<PathBuf>, String> {
     if !path.is_file() {
         return Ok(None);
     }
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default();
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("config.toml");
-    let mut candidate = path.with_file_name(format!("{name}.cargo-sweep-backup-{seconds}"));
-    let mut suffix = 1usize;
-    while candidate.exists() {
-        candidate = path.with_file_name(format!("{name}.cargo-sweep-backup-{seconds}-{suffix}"));
-        suffix += 1;
-    }
+    let candidate = path.with_file_name(format!("{name}.old"));
     fs::copy(path, &candidate).map_err(|error| format!("备份 Cargo 配置失败：{error}"))?;
+    remove_legacy_backups(path, name);
     Ok(Some(candidate))
+}
+
+fn remove_legacy_backups(path: &Path, name: &str) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let prefix = format!("{name}.cargo-sweep-backup-");
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        if file_name.to_string_lossy().starts_with(&prefix) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 fn cargo_version() -> Option<String> {
@@ -379,6 +386,8 @@ mod tests {
         let config = temp.path().join("config.toml");
         let original = "[net]\ngit-fetch-with-cli = true\n";
         fs::write(&config, original).unwrap();
+        let legacy_backup = temp.path().join("config.toml.cargo-sweep-backup-1");
+        fs::write(&legacy_backup, "legacy").unwrap();
 
         let initial = detect().unwrap();
         assert!(initial.current_is_official);
@@ -396,10 +405,13 @@ mod tests {
         assert!(content.contains("[net]"));
         assert!(content.contains("replace-with = \"cargo-sweep-managed\""));
         assert!(content.contains("sparse+https://rsproxy.cn/index/"));
+        let first_backup = applied.backup_path.unwrap();
         assert_eq!(
-            fs::read_to_string(applied.backup_path.unwrap()).unwrap(),
-            original
+            Path::new(&first_backup).file_name().unwrap(),
+            "config.toml.old"
         );
+        assert_eq!(fs::read_to_string(&first_backup).unwrap(), original);
+        assert!(!legacy_backup.exists());
 
         let official = apply(OFFICIAL_INDEX.into()).unwrap();
         assert!(official.status.current_is_official);
@@ -408,6 +420,20 @@ mod tests {
         assert!(content.contains("[net]"));
         assert!(!content.contains("replace-with"));
         assert!(!content.contains("cargo-sweep-managed"));
+        let last_backup = official.backup_path.unwrap();
+        assert_eq!(
+            Path::new(&last_backup).file_name().unwrap(),
+            "config.toml.old"
+        );
+        assert!(fs::read_to_string(&last_backup)
+            .unwrap()
+            .contains("cargo-sweep-managed"));
+        let backup_count = fs::read_dir(temp.path())
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".old"))
+            .count();
+        assert_eq!(backup_count, 1);
 
         match previous_cargo_home {
             Some(value) => std::env::set_var("CARGO_HOME", value),

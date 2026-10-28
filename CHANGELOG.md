@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.2] - 2026-10-28
+
+### 优化
+
+- Cargo 下载源配置只保留一份上一次的备份，文件名为 `config.toml.old`
+- 切换 Cargo 下载源时会清理旧的 `cargo-sweep-backup-*` 时间戳备份
+- Rustup 下载源只保留一份上一次的配置备份，文件名为 `rustup-source.json.old`
+- Rustup 下载源卡片会显示上一次配置的备份路径
+
 ## [0.5.1] - 2026-10-28
 
 ### 新功能

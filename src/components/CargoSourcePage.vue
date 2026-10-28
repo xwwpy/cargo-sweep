@@ -444,7 +444,7 @@ onMounted(() => {
         <div class="apply-actions">
           <span class="backup-hint">
             <el-icon><InfoFilled /></el-icon>
-            自动备份原配置
+            自动备份原配置（仅保留上一次 .old）
           </span>
           <el-button
             type="primary"

@@ -28,6 +28,7 @@ pub struct RustupSourceStatus {
     pub dist_server: String,
     pub update_root: String,
     pub env_configured: bool,
+    pub backup_path: Option<String>,
     pub mirrors: Vec<RustupMirror>,
 }
 
@@ -66,6 +67,9 @@ pub fn status() -> Result<RustupSourceStatus, String> {
         dist_server: normalize_url(&dist),
         update_root: normalize_url(&update),
         env_configured: dist_env.is_some() || update_env.is_some(),
+        backup_path: source_backup_path()
+            .filter(|path| path.is_file())
+            .map(|path| path.display().to_string()),
         mirrors,
     })
 }
@@ -77,6 +81,7 @@ pub fn apply(
 ) -> Result<RustupSourceStatus, String> {
     let source_id = source_id.trim();
     if source_id == "official" {
+        backup_current_source()?;
         clear_saved_source()?;
         clear_profile_var(DIST_VAR)?;
         clear_profile_var(UPDATE_VAR)?;
@@ -108,6 +113,7 @@ pub fn apply(
 
     validate_url(&dist)?;
     validate_url(&update)?;
+    backup_current_source()?;
     persist_user_env(DIST_VAR, &dist)?;
     persist_user_env(UPDATE_VAR, &update)?;
     env::set_var(DIST_VAR, &dist);
@@ -193,6 +199,39 @@ fn source_path() -> Option<std::path::PathBuf> {
     dirs::data_local_dir()
         .or_else(dirs::config_dir)
         .map(|directory| directory.join("CargoSweep").join("rustup-source.json"))
+}
+
+fn source_backup_path() -> Option<std::path::PathBuf> {
+    let path = source_path()?;
+    let name = path.file_name()?.to_string_lossy();
+    Some(path.with_file_name(format!("{name}.old")))
+}
+
+fn backup_current_source() -> Result<(), String> {
+    let Some(path) = source_path() else {
+        return Ok(());
+    };
+    let backup = source_backup_path().ok_or_else(|| "无法定位备份路径。".to_string())?;
+    if let Some(parent) = backup.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建备份目录：{error}"))?;
+    }
+    if path.is_file() {
+        fs::copy(&path, &backup).map_err(|error| format!("备份 Rustup 下载源配置失败：{error}"))?;
+        return Ok(());
+    }
+    let current = SavedSource {
+        dist_server: env::var(DIST_VAR)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_DIST.to_string()),
+        update_root: env::var(UPDATE_VAR)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_UPDATE.to_string()),
+    };
+    let content = serde_json::to_string_pretty(&current)
+        .map_err(|error| format!("无法序列化 Rustup 下载源备份：{error}"))?;
+    fs::write(&backup, content).map_err(|error| format!("无法写入 Rustup 下载源备份：{error}"))
 }
 
 fn read_saved_source() -> Option<SavedSource> {

@@ -155,6 +155,7 @@ export async function demoRustupSourceStatus(): Promise<RustupSourceStatus> {
     distServer: demoRustupDist,
     updateRoot: demoRustupUpdate,
     envConfigured: demoRustupSourceId !== "official",
+    backupPath: null,
     mirrors: demoRustupMirrors,
   };
 }
