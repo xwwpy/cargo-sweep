@@ -61,7 +61,7 @@ jobs:
           tagName: v__VERSION__
           releaseName: Cargo Sweep v__VERSION__
           releaseBody: ${{ steps.release_notes.outputs.body }}
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           includeUpdaterJson: false
           args: --bundles nsis
@@ -258,3 +258,5 @@ jobs:
           set -euo pipefail
           VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
           gh release upload "v$VERSION" latest.json SHA256SUMS.txt --clobber
+          # Publish only after every platform asset and latest.json are present.
+          gh release edit "v$VERSION" --draft=false

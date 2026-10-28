@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.4] - 2026-10-29
+
+### 修复
+
+- 发布流程改为先创建草稿，等 Windows、macOS、Linux 资源和 `latest.json` 全部上传后再公开
+- 修复新版本发布过程中检查更新返回 404，提示「Could not fetch a valid release JSON from the remote」的问题
+- 检查更新失败时自动重试 3 次，并请求不使用缓存
+- 更新检查设置 20 秒超时，避免网络异常时长时间无反馈
+
 ## [0.5.3] - 2026-10-28
 
 ### 优化

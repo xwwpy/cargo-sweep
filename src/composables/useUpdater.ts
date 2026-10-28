@@ -29,11 +29,32 @@ const progressPercent = computed(() => {
   return Math.min(100, Math.round((downloaded.value / contentLength.value) * 100));
 });
 
+async function checkWithRetry(): Promise<Update | null> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await check({
+        timeout: 20_000,
+        headers: {
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+        },
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        await new Promise((resolve) => window.setTimeout(resolve, attempt * 800));
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function checkForUpdate(options: { silent?: boolean } = {}): Promise<UpdateInfo | null> {
   if (!isTauriRuntime()) {
     if (isDemoMode() && new URLSearchParams(window.location.search).has("update")) {
       availableUpdate.value = {
-        version: "0.5.4",
+        version: "0.5.5",
         currentVersion: APP_VERSION,
         date: new Date().toISOString(),
         body: "新增：GitHub Releases 自动更新\n优化：全新 Ink & Mint 界面配色\n修复：部分 Windows 临时目录导致安装失败的问题\n\n更新完成后应用会自动重启。",
@@ -52,7 +73,7 @@ async function checkForUpdate(options: { silent?: boolean } = {}): Promise<Updat
 
   checking.value = true;
   try {
-    const update = await check();
+    const update = await checkWithRetry();
     if (!update) {
       availableUpdate.value = null;
       pendingUpdate = null;

@@ -111,7 +111,7 @@ platforms["linux-x86_64"] = linuxAppImageEntry;
 const manifest = {
   version,
   notes: release.body || `Cargo Sweep v${version}`,
-  pub_date: release.published_at,
+  pub_date: release.published_at || release.created_at,
   platforms,
 };
 
