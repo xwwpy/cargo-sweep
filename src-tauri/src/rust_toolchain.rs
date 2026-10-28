@@ -93,10 +93,10 @@ pub fn probe() -> RustInstallationProbe {
     let rustup_path = prepare_rust_environment();
     let rustc_version = run("rustc", &["--version"])
         .ok()
-        .and_then(|output| first_line(&output));
+        .and_then(|output| first_prefixed_line(&output, "rustc "));
     let rustup_version = run("rustup", &["--version"])
         .ok()
-        .and_then(|output| first_line(&output));
+        .and_then(|output| first_prefixed_line(&output, "rustup "));
     RustInstallationProbe {
         installed: rustc_version.is_some(),
         rustup_installed: rustup_version.is_some(),
@@ -111,7 +111,7 @@ pub fn detect() -> Result<RustToolchainStatus, String> {
     let settings = read_settings();
     let rustup_version = run("rustup", &["--version"])
         .ok()
-        .and_then(|output| first_line(&output))
+        .and_then(|output| first_prefixed_line(&output, "rustup "))
         .map(|version| strip_prefix(&version, "rustup "));
     let rustup_installed = rustup_version.is_some();
 
@@ -213,7 +213,7 @@ pub fn detect() -> Result<RustToolchainStatus, String> {
 
     let cargo_version = run("cargo", &["--version"])
         .ok()
-        .and_then(|output| first_line(&output))
+        .and_then(|output| first_prefixed_line(&output, "cargo "))
         .map(|version| strip_prefix(&version, "cargo "));
 
     Ok(RustToolchainStatus {
@@ -957,24 +957,28 @@ fn parse_rustc_verbose(output: &str) -> (String, String, Option<String>) {
             first = line.to_string();
         }
         if let Some(value) = line.strip_prefix("release:") {
-            release = Some(value.trim().to_string());
+            let value = value.trim();
+            if is_version_like(value) {
+                release = Some(value.to_string());
+            }
         }
         if let Some(value) = line.strip_prefix("host:") {
             host = Some(value.trim().to_string());
         }
     }
 
-    if first.is_empty() {
-        first = output.lines().next().unwrap_or("rustc").trim().to_string();
-    }
-    let version = release
-        .clone()
-        .or_else(|| first.split_whitespace().nth(1).map(ToOwned::to_owned))
-        .unwrap_or_else(|| "未知".into());
-    let rustc_version = if first.is_empty() {
+    let header_version = first
+        .split_whitespace()
+        .nth(1)
+        .filter(|value| is_version_like(value))
+        .map(ToOwned::to_owned);
+    let version = release.or(header_version).unwrap_or_default();
+    let rustc_version = if !first.is_empty() {
+        first
+    } else if !version.is_empty() {
         format!("rustc {version}")
     } else {
-        first
+        String::new()
     };
 
     (rustc_version, version, host)
@@ -984,8 +988,50 @@ fn parse_active_toolchain(output: &str) -> Option<String> {
     output
         .lines()
         .map(str::trim)
-        .find(|line| !line.is_empty())
-        .and_then(|line| line.split_whitespace().next())
+        .filter(|line| !line.is_empty())
+        .find_map(|line| {
+            let token = line.split_whitespace().next()?;
+            is_toolchain_name(token).then(|| token.to_string())
+        })
+}
+
+fn is_toolchain_name(value: &str) -> bool {
+    if value.is_empty()
+        || value.starts_with("warning:")
+        || value.starts_with("error:")
+        || value.starts_with("info:")
+        || value.ends_with(':')
+    {
+        return false;
+    }
+    value.starts_with("stable-")
+        || value.starts_with("beta-")
+        || value.starts_with("nightly-")
+        || value.starts_with("custom-")
+        || value
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_digit())
+        || value.contains('-') && value.chars().any(|character| character.is_ascii_digit())
+}
+
+fn is_version_like(value: &str) -> bool {
+    let release = value.split_whitespace().next().unwrap_or_default();
+    let core = release.split('-').next().unwrap_or_default();
+    let mut parts = core.split('.');
+    let major = parts.next().unwrap_or_default();
+    let minor = parts.next().unwrap_or_default();
+    !major.is_empty()
+        && !minor.is_empty()
+        && major.chars().all(|character| character.is_ascii_digit())
+        && minor.chars().all(|character| character.is_ascii_digit())
+}
+
+fn first_prefixed_line(output: &str, prefix: &str) -> Option<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with(prefix))
         .map(ToOwned::to_owned)
 }
 
@@ -998,14 +1044,6 @@ fn channel_from_toolchain(toolchain: &str) -> String {
         return "pinned".into();
     }
     "custom".into()
-}
-
-fn first_line(output: &str) -> Option<String> {
-    output
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(ToOwned::to_owned)
 }
 
 fn strip_prefix(value: &str, prefix: &str) -> String {
@@ -1064,6 +1102,14 @@ LLVM version: 23.1.1";
     fn parses_active_and_installed_toolchains() {
         let active = parse_active_toolchain("stable-x86_64-pc-windows-msvc (default)\n");
         assert_eq!(active.as_deref(), Some("stable-x86_64-pc-windows-msvc"));
+        let noisy = parse_active_toolchain(
+            "the active toolchain is not installed\nstable-x86_64-pc-windows-msvc (default)\n",
+        );
+        assert_eq!(noisy.as_deref(), Some("stable-x86_64-pc-windows-msvc"));
+        assert!(parse_active_toolchain("the active toolchain\n").is_none());
+        assert!(!is_version_like("the"));
+        let (_, version, _) = parse_rustc_verbose("the active toolchain is not installed\n");
+        assert!(version.is_empty());
         let channel = channel_from_toolchain("nightly-x86_64-pc-windows-msvc");
         assert_eq!(channel, "nightly");
         let pinned = channel_from_toolchain("1.94.1-x86_64-pc-windows-msvc");

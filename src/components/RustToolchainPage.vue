@@ -5,6 +5,7 @@ import { operationBusy as busy } from "../composables/useOperationBusy";
 import {
   CircleCheck,
   Clock,
+  CopyDocument,
   Cpu,
   Delete,
   Download,
@@ -83,7 +84,13 @@ const rustupHomeTarget = ref("");
 const createRustupLink = ref(true);
 const rustupMigrating = ref(false);
 const rustupMigrationError = ref<string | null>(null);
+const isWindows = /Windows/i.test(navigator.userAgent);
 let timer: number | undefined;
+
+interface CommandEntry {
+  label: string;
+  command: string;
+}
 
 const rustupReady = computed(() => status.value?.rustupInstalled ?? false);
 const channelViews = computed<ChannelView[]>(() => {
@@ -103,8 +110,15 @@ const currentChannel = computed(
     null,
 );
 const activeLatest = computed(() => currentChannel.value?.latest ?? null);
-const currentVersion = computed(() => status.value?.version ?? null);
-const latestVersion = computed(() => activeLatest.value?.release ?? null);
+const currentVersion = computed(() => safeVersion(status.value?.version));
+const latestVersion = computed(() =>
+  safeVersion(activeLatest.value?.release),
+);
+const activeToolchainName = computed(() =>
+  safeToolchainName(
+    status.value?.activeToolchain ?? status.value?.defaultToolchain,
+  ),
+);
 const currentBuild = computed(() => currentChannel.value?.currentBuild ?? null);
 const latestBuild = computed(() => currentChannel.value?.latestBuild ?? null);
 const currentIsLatest = computed(() => {
@@ -229,6 +243,52 @@ const rustupLinkLabel = computed(() => {
     ? "RUSTUP_HOME 已链接"
     : "RUSTUP_HOME 链接异常";
 });
+const rustupInstallCommand = computed(() =>
+  isWindows
+    ? "winget install --id Rustlang.Rustup -e --silent --accept-package-agreements --accept-source-agreements"
+    : "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+);
+const manualCommands = computed<CommandEntry[]>(() => {
+  const entries: CommandEntry[] = [
+    { label: "安装 rustup", command: rustupInstallCommand.value },
+    {
+      label: "安装最新 Stable",
+      command: installToolchainCommand("stable"),
+    },
+    {
+      label: "安装最新 Nightly",
+      command: installToolchainCommand("nightly"),
+    },
+    {
+      label: "安装历史版本（替换版本号）",
+      command: installToolchainCommand("1.85.0"),
+    },
+    { label: "更新全部工具链", command: "rustup update" },
+  ];
+  for (const toolchain of status.value?.toolchains ?? []) {
+    if (!toolchain.default && !toolchain.active) {
+      entries.push({
+        label: `设为默认：${toolchain.name}`,
+        command: defaultToolchainCommand(toolchain.name),
+      });
+      entries.push({
+        label: `删除：${toolchain.name}`,
+        command: uninstallToolchainCommand(toolchain.name),
+      });
+    }
+  }
+  if (cargoHome.value) {
+    entries.push({
+      label: "设置 CARGO_HOME（替换为实际路径）",
+      command: envCommand("CARGO_HOME", cargoHome.value.current),
+    });
+    entries.push({
+      label: "设置 RUSTUP_HOME（替换为实际路径）",
+      command: envCommand("RUSTUP_HOME", cargoHome.value.rustup.current),
+    });
+  }
+  return entries;
+});
 const elapsedLabel = computed(() => {
   const minutes = Math.floor(elapsed.value / 60);
   const seconds = elapsed.value % 60;
@@ -246,11 +306,11 @@ function channelView(
     label: key === "stable" ? "Stable" : "Nightly",
     installed: Boolean(info?.installed),
     toolchain: info?.toolchain ?? null,
-    currentRelease: info?.release ?? null,
+    currentRelease: safeVersion(info?.release),
     currentFull,
     currentBuild: buildLabel(currentFull, null),
     latest: latestInfo,
-    latestRelease: latestInfo?.release ?? null,
+    latestRelease: safeVersion(latestInfo?.release),
     latestBuild: latestInfo
       ? buildLabel(`rustc ${latestInfo.version}`, latestInfo.date)
       : null,
@@ -261,6 +321,145 @@ function channelView(
     active: Boolean(info?.active),
     default: Boolean(info?.default),
   };
+}
+
+function safeVersion(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!/\d/.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function safeToolchainName(value: string | null | undefined): string | null {
+  if (!value || value.trim().toLowerCase() === "the") {
+    return null;
+  }
+  return value;
+}
+
+function quoteShell(value: string): string {
+  if (isWindows) {
+    return `"${value.replace(/"/g, '\\"')}"`;
+  }
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function installToolchainCommand(target: string): string {
+  return `rustup toolchain install ${target} --profile default`;
+}
+
+function updateToolchainCommand(toolchain: string): string {
+  return `rustup update ${toolchain} --no-self-update`;
+}
+
+function defaultToolchainCommand(toolchain: string): string {
+  return `rustup default ${toolchain}`;
+}
+
+function uninstallToolchainCommand(toolchain: string): string {
+  return `rustup toolchain uninstall ${toolchain}`;
+}
+
+function envCommand(variable: string, value: string): string {
+  return isWindows
+    ? `setx ${variable} ${quoteShell(value)}`
+    : `export ${variable}=${quoteShell(value)}`;
+}
+
+function channelPrimaryCommand(view: ChannelView): string {
+  if (!view.installed) {
+    return installToolchainCommand(view.key);
+  }
+  return updateToolchainCommand(view.toolchain ?? view.key);
+}
+
+function channelDefaultCommand(view: ChannelView): string | null {
+  if (!view.installed || view.default || !view.toolchain) {
+    return null;
+  }
+  return defaultToolchainCommand(view.toolchain);
+}
+
+function migrationCommands(
+  kind: "cargo" | "rustup",
+  current: string | null,
+  target: string,
+  createLink: boolean,
+): string {
+  if (!current || !target) {
+    return "";
+  }
+  const variable = kind === "cargo" ? "CARGO_HOME" : "RUSTUP_HOME";
+  const backup = `${current}.cargo-sweep-backup`;
+  if (isWindows) {
+    const lines = [
+      `robocopy ${quoteShell(current)} ${quoteShell(target)} /E`,
+      `setx ${variable} ${quoteShell(target)}`,
+    ];
+    if (createLink) {
+      const backupName = backup.split(/[\\/]/).pop() ?? backup;
+      lines.splice(
+        1,
+        0,
+        `ren ${quoteShell(current)} ${quoteShell(backupName)}`,
+      );
+      lines.push(`mklink /J ${quoteShell(current)} ${quoteShell(target)}`);
+    }
+    return lines.join("\n");
+  }
+  const lines = [
+    `cp -a ${quoteShell(`${current}/.`)} ${quoteShell(`${target}/`)}`,
+    `export ${variable}=${quoteShell(target)}`,
+  ];
+  if (createLink) {
+    lines.splice(
+      1,
+      0,
+      `mv ${quoteShell(current)} ${quoteShell(backup)}`,
+      `ln -s ${quoteShell(target)} ${quoteShell(current)}`,
+    );
+  }
+  return `# 将 export 行加入 ~/.zprofile 或 ~/.profile\n${lines.join("\n")}`;
+}
+
+const cargoMigrationCommand = computed(() =>
+  migrationCommands(
+    "cargo",
+    cargoHome.value?.current ?? null,
+    cargoHomeTarget.value,
+    createCargoLink.value,
+  ),
+);
+const rustupMigrationCommand = computed(() =>
+  migrationCommands(
+    "rustup",
+    cargoHome.value?.rustup.current ?? null,
+    rustupHomeTarget.value,
+    createRustupLink.value,
+  ),
+);
+
+async function copyText(value: string) {
+  if (!value) {
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+  }
+  ElMessage.success("命令已复制");
 }
 
 function sameVersion(left: string | null, right: string | null): boolean {
@@ -774,8 +973,8 @@ onUnmounted(stopTimer);
           </p>
         </div>
         <div class="setup-versions">
-          <span v-if="latest?.stable">Stable {{ latest.stable.release }}</span>
-          <span v-if="latest?.nightly">Nightly {{ latest.nightly.release }}</span>
+          <span v-if="latest?.stable">Stable {{ safeVersion(latest.stable.release) || "未知" }}</span>
+          <span v-if="latest?.nightly">Nightly {{ safeVersion(latest.nightly.release) || "未知" }}</span>
         </div>
       </div>
 
@@ -809,6 +1008,17 @@ onUnmounted(stopTimer);
             一键安装 rustup
           </el-button>
         </div>
+        <div class="command-line">
+          <code>{{ rustupInstallCommand }}</code>
+          <button
+            class="copy-button"
+            type="button"
+            title="复制安装命令"
+            @click="copyText(rustupInstallCommand)"
+          >
+            <el-icon><CopyDocument /></el-icon>
+          </button>
+        </div>
       </div>
 
       <section v-if="status.installed" class="current-panel">
@@ -816,7 +1026,7 @@ onUnmounted(stopTimer);
         <div class="current-copy">
           <span class="panel-label">当前默认工具链</span>
           <h2>{{ currentVersion || "未知版本" }}</h2>
-          <code>{{ status.activeToolchain || status.defaultToolchain || "未设置默认工具链" }}</code>
+          <code>{{ activeToolchainName || "未设置默认工具链" }}</code>
           <span v-if="currentBuild" class="current-build">{{ currentBuild }}</span>
         </div>
         <div class="current-latest">
@@ -1006,6 +1216,35 @@ onUnmounted(stopTimer);
               设为默认
             </el-button>
           </div>
+
+          <div class="card-commands">
+            <div class="command-line">
+              <span class="command-label">
+                {{ channel.installed ? "更新命令" : "安装命令" }}
+              </span>
+              <code>{{ channelPrimaryCommand(channel) }}</code>
+              <button
+                class="copy-button"
+                type="button"
+                title="复制命令"
+                @click="copyText(channelPrimaryCommand(channel))"
+              >
+                <el-icon><CopyDocument /></el-icon>
+              </button>
+            </div>
+            <div v-if="channelDefaultCommand(channel)" class="command-line">
+              <span class="command-label">切换命令</span>
+              <code>{{ channelDefaultCommand(channel) }}</code>
+              <button
+                class="copy-button"
+                type="button"
+                title="复制命令"
+                @click="copyText(channelDefaultCommand(channel) ?? '')"
+              >
+                <el-icon><CopyDocument /></el-icon>
+              </button>
+            </div>
+          </div>
         </article>
       </div>
 
@@ -1073,7 +1312,7 @@ onUnmounted(stopTimer);
           >
             <span class="toolchain-dot" />
             <span class="toolchain-name">{{ toolchain.name }}</span>
-            <span class="toolchain-version">{{ toolchain.release || "未知" }}</span>
+            <span class="toolchain-version">{{ safeVersion(toolchain.release) || "未知" }}</span>
             <span v-if="toolchain.default" class="active-label">
               <el-icon><CircleCheck /></el-icon>
               默认
@@ -1106,6 +1345,36 @@ onUnmounted(stopTimer);
             >
               <el-icon><Delete /></el-icon>
             </el-button>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="manualCommands.length > 0" class="manual-commands">
+        <div class="manual-commands-head">
+          <div>
+            <span class="section-kicker">COMMANDS</span>
+            <h2>手动执行命令</h2>
+          </div>
+          <span>可复制后在终端执行</span>
+        </div>
+        <div class="manual-command-list">
+          <div
+            v-for="entry in manualCommands"
+            :key="`${entry.label}-${entry.command}`"
+            class="manual-command"
+          >
+            <span>{{ entry.label }}</span>
+            <div class="command-line">
+              <code>{{ entry.command }}</code>
+              <button
+                class="copy-button"
+                type="button"
+                title="复制命令"
+                @click="copyText(entry.command)"
+              >
+                <el-icon><CopyDocument /></el-icon>
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -1160,6 +1429,21 @@ onUnmounted(stopTimer);
             <code>RUSTUP_HOME</code>
             <span>{{ cargoHome?.rustupHome }}（保持不变）</span>
           </div>
+        </div>
+
+        <div v-if="cargoMigrationCommand" class="migration-command">
+          <div class="migration-command-head">
+            <span>可复制的等价命令</span>
+            <button
+              class="copy-button"
+              type="button"
+              title="复制迁移命令"
+              @click="copyText(cargoMigrationCommand)"
+            >
+              <el-icon><CopyDocument /></el-icon>
+            </button>
+          </div>
+          <pre>{{ cargoMigrationCommand }}</pre>
         </div>
 
         <el-checkbox v-model="createCargoLink" :disabled="cargoMigrating">
@@ -1222,6 +1506,21 @@ onUnmounted(stopTimer);
             <span>{{ cargoHome?.current }}（保持不变）</span>
           </div>
           <div><code>PATH</code><span>保持不变</span></div>
+        </div>
+
+        <div v-if="rustupMigrationCommand" class="migration-command">
+          <div class="migration-command-head">
+            <span>可复制的等价命令</span>
+            <button
+              class="copy-button"
+              type="button"
+              title="复制迁移命令"
+              @click="copyText(rustupMigrationCommand)"
+            >
+              <el-icon><CopyDocument /></el-icon>
+            </button>
+          </div>
+          <pre>{{ rustupMigrationCommand }}</pre>
         </div>
 
         <el-checkbox v-model="createRustupLink" :disabled="rustupMigrating">
@@ -2133,6 +2432,145 @@ onUnmounted(stopTimer);
   align-items: center;
 }
 
+.card-commands {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 1px;
+}
+
+.command-line {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 5px 7px;
+  background: #f8fafc;
+  border: 1px solid #eef0f3;
+  border-radius: 6px;
+}
+
+.command-line code {
+  flex: 1;
+  min-width: 0;
+  padding-top: 1px;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8px;
+  line-height: 1.55;
+  color: #475467;
+  word-break: break-all;
+}
+
+.command-label {
+  flex: 0 0 auto;
+  padding-top: 1px;
+  font-size: 7.5px;
+  color: #98a2b3;
+  white-space: nowrap;
+}
+
+.copy-button {
+  display: grid;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 10px;
+  color: #667085;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 5px;
+  place-items: center;
+}
+
+.copy-button:hover {
+  color: #0f766e;
+  border-color: #b8e8df;
+}
+
+.manual-commands {
+  padding: 15px 16px;
+  margin-top: 14px;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 12px;
+}
+
+.manual-commands-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 9px;
+}
+
+.manual-commands-head h2 {
+  margin: 0;
+  font-family: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+  font-weight: 650;
+  color: #344054;
+}
+
+.manual-commands-head > span {
+  font-size: 8px;
+  color: #98a2b3;
+}
+
+.manual-command-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.manual-command {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.manual-command > span {
+  padding-top: 5px;
+  overflow: hidden;
+  font-size: 8px;
+  color: #667085;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.migration-command {
+  padding: 8px 9px;
+  margin: 8px 0;
+  background: #f8fafc;
+  border: 1px solid #eef0f3;
+  border-radius: 7px;
+}
+
+.migration-command-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 5px;
+  font-size: 8px;
+  font-weight: 600;
+  color: #667085;
+}
+
+.migration-command pre {
+  max-height: 150px;
+  padding: 0;
+  margin: 0;
+  overflow: auto;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8px;
+  line-height: 1.6;
+  color: #475467;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .channel-actions :deep(.el-button) {
   height: 28px;
   padding: 0 10px;
@@ -2417,6 +2855,11 @@ onUnmounted(stopTimer);
   .cargo-home-footer {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .manual-command {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 
   .current-panel {

@@ -33,7 +33,7 @@ async function checkForUpdate(options: { silent?: boolean } = {}): Promise<Updat
   if (!isTauriRuntime()) {
     if (isDemoMode() && new URLSearchParams(window.location.search).has("update")) {
       availableUpdate.value = {
-        version: "0.4.8",
+        version: "0.5.1",
         currentVersion: APP_VERSION,
         date: new Date().toISOString(),
         body: "新增：GitHub Releases 自动更新\n优化：全新 Ink & Mint 界面配色\n修复：部分 Windows 临时目录导致安装失败的问题\n\n更新完成后应用会自动重启。",

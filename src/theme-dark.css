@@ -738,6 +738,44 @@ html.dark .rustup-actions .el-input__inner {
   color: #f5e6d3;
 }
 
+html.dark .command-line,
+html.dark .migration-command {
+  background: #0b1422;
+  border-color: #1e2b3c;
+}
+
+html.dark .command-line code,
+html.dark .migration-command pre {
+  color: #a9b8c9;
+}
+
+html.dark .command-label,
+html.dark .manual-command > span,
+html.dark .manual-commands-head > span,
+html.dark .migration-command-head {
+  color: #7f8ea3;
+}
+
+html.dark .copy-button {
+  color: #7f8ea3;
+  background: #111e2e;
+  border-color: #243244;
+}
+
+html.dark .copy-button:hover {
+  color: #5eead4;
+  border-color: #1f4f49;
+}
+
+html.dark .manual-commands {
+  background: #0f1726;
+  border-color: #1f2d40;
+}
+
+html.dark .manual-commands-head h2 {
+  color: #d7e2ef;
+}
+
 html.dark .cargo-home-card {
   background: #0f1726;
   border-color: #1f2d40;
