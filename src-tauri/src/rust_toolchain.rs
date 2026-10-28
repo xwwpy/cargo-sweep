@@ -4,7 +4,8 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use toml::Value;
@@ -78,9 +79,65 @@ pub struct ToolchainOperationResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ComponentProgress {
+    pub name: String,
+    pub phase: String,
+    pub percent: u8,
+    pub elapsed_ms: u64,
+    pub speed_bps: u64,
+    pub indeterminate: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct OperationProgress {
     pub percent: u8,
     pub message: String,
+    pub phase: String,
+    pub line: Option<String>,
+    pub components: Vec<ComponentProgress>,
+    pub speed_bps: u64,
+    pub elapsed_ms: u64,
+    pub downloaded_bytes: u64,
+}
+
+impl OperationProgress {
+    fn new(percent: u8, message: impl Into<String>) -> Self {
+        Self {
+            percent,
+            message: message.into(),
+            phase: "verify".into(),
+            line: None,
+            components: Vec::new(),
+            speed_bps: 0,
+            elapsed_ms: 0,
+            downloaded_bytes: 0,
+        }
+    }
+}
+
+impl Default for OperationProgress {
+    fn default() -> Self {
+        Self::new(0, "")
+    }
+}
+
+impl Serialize for OperationProgress {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("OperationProgress", 8)?;
+        state.serialize_field("percent", &self.percent)?;
+        state.serialize_field("message", &self.message)?;
+        state.serialize_field("phase", &self.phase)?;
+        state.serialize_field("line", &self.line)?;
+        state.serialize_field("components", &self.components)?;
+        state.serialize_field("speedBps", &self.speed_bps)?;
+        state.serialize_field("elapsedMs", &self.elapsed_ms)?;
+        state.serialize_field("downloadedBytes", &self.downloaded_bytes)?;
+        state.end()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -293,44 +350,39 @@ where
         return Err("未检测到 rustup，请先安装 Rustup 后再下载工具链。".into());
     }
 
-    on_progress(OperationProgress {
-        percent: 2,
-        message: format!("准备下载 {target}"),
-    });
+    on_progress(OperationProgress::new(2, format!("准备下载 {target}")));
     let is_versioned = target
         .chars()
         .next()
         .is_some_and(|character| character.is_ascii_digit());
     let custom_source =
         env::var_os("RUSTUP_DIST_SERVER").is_some() || env::var_os("RUSTUP_UPDATE_ROOT").is_some();
-    let mut progress = RustupProgress::default();
+    let monitor = DownloadMonitor::start();
+    let mut progress = RustupProgress::new(monitor.meter());
     let (mut success, mut text) = run_streaming(
         "rustup",
         &["toolchain", "install", &target, "--profile", "default"],
         |line| {
-            if let Some(next) = progress.observe(line) {
-                on_progress(next);
-            }
+            on_progress(progress.observe(line));
         },
     )?;
 
     if !success && is_versioned && custom_source {
-        on_progress(OperationProgress {
-            percent: 5,
-            message: "当前下载源缺少该版本，改用官方源重试".into(),
-        });
-        let mut fallback_progress = RustupProgress::default();
+        on_progress(OperationProgress::new(
+            5,
+            "当前下载源缺少该版本，改用官方源重试",
+        ));
+        let mut fallback_progress = RustupProgress::new(monitor.meter());
         let (fallback_success, fallback_text) = run_streaming_with_env(
             "rustup",
             &["toolchain", "install", &target, "--profile", "default"],
             &["RUSTUP_DIST_SERVER", "RUSTUP_UPDATE_ROOT"],
             |line| {
-                if let Some(next) = fallback_progress.observe(line) {
-                    on_progress(next);
-                }
+                on_progress(fallback_progress.observe(line));
             },
         )?;
         success = fallback_success;
+        progress = fallback_progress;
         text = if fallback_text.trim().is_empty() {
             format!("{text}\n\n[已改用官方源重试] 未返回输出。")
         } else {
@@ -339,10 +391,7 @@ where
     }
 
     if success && (set_default || before.default_toolchain.is_none()) {
-        on_progress(OperationProgress {
-            percent: 97,
-            message: "设置默认工具链".into(),
-        });
+        on_progress(OperationProgress::new(97, "设置默认工具链"));
         let default_output = run("rustup", &["default", &target]);
         match default_output {
             Ok(default_text) => {
@@ -358,10 +407,7 @@ where
     }
 
     if success {
-        on_progress(OperationProgress {
-            percent: 100,
-            message: "工具链安装完成".into(),
-        });
+        on_progress(progress.finish("工具链安装完成"));
     }
     let status = detect().unwrap_or(before);
     Ok(ToolchainOperationResult {
@@ -407,29 +453,25 @@ where
         .or_else(|| before.active_toolchain.clone())
         .or_else(|| before.default_toolchain.clone());
 
-    on_progress(OperationProgress {
-        percent: 2,
-        message: "检查工具链更新".into(),
-    });
+    on_progress(OperationProgress::new(2, "检查工具链更新"));
     let mut args = vec!["update", "--no-self-update"];
     if let Some(toolchain) = toolchain.as_deref() {
         args.push(toolchain);
     }
-    let mut progress = RustupProgress::default();
+    let monitor = DownloadMonitor::start();
+    let mut progress = RustupProgress::new(monitor.meter());
     let (mut success, mut text) = run_streaming("rustup", &args, |line| {
-        if let Some(next) = progress.observe(line) {
-            on_progress(next);
-        }
+        on_progress(progress.observe(line));
     })?;
     if !success && text.trim().is_empty() {
         return Err("rustup update 失败，未返回输出。".into());
     }
     if !success && needs_toolchain_repair(&text) {
         if let Some(toolchain_name) = toolchain.clone() {
-            on_progress(OperationProgress {
-                percent: 4,
-                message: "检测到工具链文件冲突，正在自动修复".into(),
-            });
+            on_progress(OperationProgress::new(
+                4,
+                "检测到工具链文件冲突，正在自动修复",
+            ));
             let was_default = before.default_toolchain.as_deref() == Some(toolchain_name.as_str());
             match repair_toolchain(&toolchain_name, was_default, &mut on_progress) {
                 Ok((repair_success, repair_text)) => {
@@ -443,14 +485,11 @@ where
         }
     }
     if success {
-        on_progress(OperationProgress {
-            percent: 100,
-            message: if text.trim().is_empty() {
-                "没有新的更新".into()
-            } else {
-                "工具链更新完成".into()
-            },
-        });
+        on_progress(progress.finish(if text.trim().is_empty() {
+            "没有新的更新"
+        } else {
+            "工具链更新完成"
+        }));
     }
     let status = detect().unwrap_or(before);
     Ok(ToolchainOperationResult {
@@ -493,10 +532,7 @@ where
     let targets = installed_packages("target", toolchain);
     let mut output = String::from("[自动修复] 检测到工具链文件冲突，正在重新安装。");
 
-    on_progress(OperationProgress {
-        percent: 6,
-        message: "清理损坏的工具链".into(),
-    });
+    on_progress(OperationProgress::new(6, "清理损坏的工具链"));
     if let Ok((_, text)) = run_capture("rustup", &["toolchain", "uninstall", toolchain]) {
         append_output(&mut output, &text);
     }
@@ -518,14 +554,12 @@ where
         None
     };
 
-    let mut progress = RustupProgress::default();
+    let mut progress = RustupProgress::new(Arc::new(Mutex::new(DownloadMeter::default())));
     let install_result = run_streaming(
         "rustup",
         &["toolchain", "install", toolchain, "--profile", "default"],
         |line| {
-            if let Some(next) = progress.observe(line) {
-                on_progress(next);
-            }
+            on_progress(progress.observe(line));
         },
     );
     let (mut installed, install_text) = match install_result {
@@ -544,10 +578,7 @@ where
         return Ok((false, output));
     }
 
-    on_progress(OperationProgress {
-        percent: 94,
-        message: "恢复额外组件和目标".into(),
-    });
+    on_progress(OperationProgress::new(94, "恢复额外组件和目标"));
     for component in components {
         if let Ok((_, text)) = run_capture(
             "rustup",
@@ -578,6 +609,7 @@ where
         if let Some(backup) = backup {
             let _ = fs::remove_dir_all(backup);
         }
+        on_progress(progress.finish("工具链修复完成"));
     } else {
         restore_repair_backup(&toolchain_dir, backup.as_deref());
     }
@@ -726,15 +758,9 @@ where
             winget_result.map_err(|error| format!("winget 安装 rustup 失败：{error}"))?;
         prepare_rust_environment();
         if run("rustup", &["--version"]).is_ok() {
-            on_progress(OperationProgress {
-                percent: 72,
-                message: "安装 Stable 工具链".into(),
-            });
+            on_progress(OperationProgress::new(72, "安装 Stable 工具链"));
             ensure_stable_toolchain(&mut text)?;
-            on_progress(OperationProgress {
-                percent: 100,
-                message: "rustup 安装完成".into(),
-            });
+            on_progress(OperationProgress::new(100, "rustup 安装完成"));
             let status = detect()?;
             return Ok(ToolchainOperationResult {
                 success: true,
@@ -745,10 +771,7 @@ where
         return Err("winget 已结束，但未检测到 rustup，请检查 winget 输出。".into());
     }
 
-    on_progress(OperationProgress {
-        percent: 3,
-        message: "准备下载 rustup-init".into(),
-    });
+    on_progress(OperationProgress::new(3, "准备下载 rustup-init"));
     let target = rustup_target()?;
     let executable_name = if cfg!(windows) {
         "rustup-init.exe"
@@ -784,20 +807,17 @@ where
             let percent = (5 + bytes.len() as u64 * 70 / total).min(75) as u8;
             if percent >= last_percent + 2 {
                 last_percent = percent;
-                on_progress(OperationProgress {
+                on_progress(OperationProgress::new(
                     percent,
-                    message: format!("下载 rustup-init · {}%", percent),
-                });
+                    format!("下载 rustup-init · {percent}%"),
+                ));
             }
         }
     }
     if bytes.len() < 1024 * 1024 {
         return Err("下载的 rustup-init 文件不完整，请重试。".into());
     }
-    on_progress(OperationProgress {
-        percent: 78,
-        message: "校验 rustup-init".into(),
-    });
+    on_progress(OperationProgress::new(78, "校验 rustup-init"));
     verify_download(&client, &url, &bytes)?;
 
     let install_dir = dirs::data_local_dir()
@@ -813,10 +833,7 @@ where
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))
             .map_err(|error| format!("无法设置 rustup-init 执行权限：{error}"))?;
     }
-    on_progress(OperationProgress {
-        percent: 85,
-        message: "安装 Stable 工具链".into(),
-    });
+    on_progress(OperationProgress::new(85, "安装 Stable 工具链"));
 
     let before = detect()?;
     let mut command = Command::new(&binary);
@@ -840,10 +857,7 @@ where
     ));
     let _ = fs::remove_file(&binary);
     if success {
-        on_progress(OperationProgress {
-            percent: 100,
-            message: "rustup 安装完成".into(),
-        });
+        on_progress(OperationProgress::new(100, "rustup 安装完成"));
     }
 
     prepare_rust_environment();
@@ -1296,41 +1310,273 @@ fn validate_target(target: &str) -> Result<String, String> {
     Ok(target.to_string())
 }
 
+#[derive(Default, Clone)]
+struct DownloadMeter {
+    bytes: u64,
+    speed_bps: u64,
+}
+
+struct DownloadMonitor {
+    meter: Arc<Mutex<DownloadMeter>>,
+    stop: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl DownloadMonitor {
+    fn start() -> Self {
+        let meter = Arc::new(Mutex::new(DownloadMeter::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_meter = Arc::clone(&meter);
+        let thread_stop = Arc::clone(&stop);
+        let thread = thread::spawn(move || {
+            let mut last_bytes = downloaded_bytes();
+            let mut last_time = Instant::now();
+            while !thread_stop.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(250));
+                let bytes = downloaded_bytes();
+                let now = Instant::now();
+                let elapsed = now.duration_since(last_time);
+                let speed = if elapsed.as_secs_f64() > 0.0 {
+                    ((bytes.saturating_sub(last_bytes)) as f64 / elapsed.as_secs_f64()) as u64
+                } else {
+                    0
+                };
+                if let Ok(mut meter) = thread_meter.lock() {
+                    meter.bytes = bytes;
+                    if speed > 0 {
+                        meter.speed_bps = speed;
+                    } else if elapsed.as_secs() >= 2 {
+                        meter.speed_bps = 0;
+                    }
+                }
+                last_bytes = bytes;
+                last_time = now;
+            }
+        });
+        Self {
+            meter,
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    fn meter(&self) -> Arc<Mutex<DownloadMeter>> {
+        Arc::clone(&self.meter)
+    }
+}
+
+impl Drop for DownloadMonitor {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn downloaded_bytes() -> u64 {
+    let Some(home) = env::var_os("RUSTUP_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".rustup")))
+    else {
+        return 0;
+    };
+    let Ok(entries) = fs::read_dir(home.join("downloads")) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.metadata().ok())
+        .filter(|metadata| metadata.is_file())
+        .map(|metadata| metadata.len())
+        .sum()
+}
+
 #[derive(Default)]
+struct TrackedComponent {
+    name: String,
+    phase: String,
+    percent: u8,
+    started: Option<Instant>,
+    elapsed_ms: u64,
+    speed_bps: u64,
+}
+
 struct RustupProgress {
     percent: u8,
     downloads: u8,
     installs: u8,
+    phase: String,
+    message: String,
+    components: Vec<TrackedComponent>,
+    started: Instant,
+    meter: Arc<Mutex<DownloadMeter>>,
 }
 
 impl RustupProgress {
-    fn observe(&mut self, line: &str) -> Option<OperationProgress> {
+    fn new(meter: Arc<Mutex<DownloadMeter>>) -> Self {
+        Self {
+            percent: 0,
+            downloads: 0,
+            installs: 0,
+            phase: "verify".into(),
+            message: "准备安装".into(),
+            components: Vec::new(),
+            started: Instant::now(),
+            meter,
+        }
+    }
+
+    fn meter_values(&self) -> DownloadMeter {
+        self.meter
+            .lock()
+            .map(|meter| meter.clone())
+            .unwrap_or_default()
+    }
+}
+
+impl RustupProgress {
+    fn observe(&mut self, line: &str) -> OperationProgress {
         let clean = strip_ansi(line);
         let lower = clean.to_ascii_lowercase();
-        let (percent, message) = if lower.contains("syncing channel updates") {
-            (8, "同步版本信息".to_string())
+        if lower.contains("syncing channel updates") {
+            self.phase = "verify".into();
+            self.percent = self.percent.max(8);
+            self.message = "验证版本与组件信息".into();
         } else if lower.contains("downloading component") {
+            self.finish_downloading();
+            let name = component_name(&clean);
             self.downloads = self.downloads.saturating_add(1);
-            let percent = 12 + self.downloads.min(6) * 6;
-            (percent, format!("正在下载 {}", component_name(&clean)))
+            self.phase = "download".into();
+            self.percent = self.percent.max(12 + self.downloads.min(6) * 6);
+            self.message = format!("正在下载 {name}");
+            self.components.push(TrackedComponent {
+                name,
+                phase: "downloading".into(),
+                percent: 0,
+                started: Some(Instant::now()),
+                elapsed_ms: 0,
+                speed_bps: 0,
+            });
         } else if lower.contains("installing component") {
+            self.finish_downloading();
+            let name = component_name(&clean);
             self.installs = self.installs.saturating_add(1);
-            let percent = 52 + self.installs.min(6) * 7;
-            (percent, format!("正在安装 {}", component_name(&clean)))
+            self.phase = "install".into();
+            self.percent = self.percent.max(52 + self.installs.min(6) * 7);
+            self.message = format!("正在安装 {name}");
+            let total = self.components.len().max(self.installs as usize).max(1);
+            let component_percent = ((self.installs as usize * 100) / total).min(99) as u8;
+            if let Some(component) = self
+                .components
+                .iter_mut()
+                .find(|component| component.name == name)
+            {
+                component.phase = "installing".into();
+                component.percent = component_percent;
+                component.started = Some(Instant::now());
+            } else {
+                self.components.push(TrackedComponent {
+                    name,
+                    phase: "installing".into(),
+                    percent: component_percent,
+                    started: Some(Instant::now()),
+                    elapsed_ms: 0,
+                    speed_bps: 0,
+                });
+            }
         } else if lower.contains("default toolchain set") {
-            (96, "设置默认工具链".to_string())
+            self.mark_all_done();
+            self.phase = "finalize".into();
+            self.percent = self.percent.max(96);
+            self.message = "设置默认工具链".into();
         } else if lower.contains("checking for self-update") {
-            (4, "检查 rustup 更新".to_string())
-        } else {
-            let percent = line_percentage(&clean)?;
-            (percent, clean.trim().to_string())
-        };
-        let percent = percent.clamp(1, 99);
-        if percent < self.percent {
-            return None;
+            self.phase = "verify".into();
+            self.percent = self.percent.max(4);
+            self.message = "检查 rustup 更新".into();
+        } else if let Some(percent) = line_percentage(&clean) {
+            self.percent = self.percent.max(percent.clamp(1, 99));
+            self.message = clean.trim().to_string();
         }
-        self.percent = percent;
-        Some(OperationProgress { percent, message })
+        self.snapshot(Some(clean))
+    }
+
+    fn finish_downloading(&mut self) {
+        let now = Instant::now();
+        let speed = self.meter_values().speed_bps;
+        for component in &mut self.components {
+            if component.phase == "downloading" {
+                component.phase = "done".into();
+                component.percent = 100;
+                component.speed_bps = speed;
+                if let Some(started) = component.started {
+                    component.elapsed_ms = now.duration_since(started).as_millis() as u64;
+                }
+            }
+        }
+    }
+
+    fn mark_all_done(&mut self) {
+        let now = Instant::now();
+        for component in &mut self.components {
+            if component.phase != "done" {
+                component.phase = "done".into();
+                component.percent = 100;
+                if let Some(started) = component.started {
+                    component.elapsed_ms = now.duration_since(started).as_millis() as u64;
+                }
+            }
+        }
+    }
+
+    fn finish(&mut self, message: &str) -> OperationProgress {
+        self.mark_all_done();
+        self.phase = "done".into();
+        self.percent = 100;
+        self.message = message.to_string();
+        self.snapshot(None)
+    }
+
+    fn snapshot(&self, line: Option<String>) -> OperationProgress {
+        let now = Instant::now();
+        let meter = self.meter_values();
+        let components = self
+            .components
+            .iter()
+            .map(|component| {
+                let running = component.phase == "downloading" || component.phase == "installing";
+                let elapsed_ms = if running {
+                    component
+                        .started
+                        .map(|started| now.duration_since(started).as_millis() as u64)
+                        .unwrap_or(component.elapsed_ms)
+                } else {
+                    component.elapsed_ms
+                };
+                ComponentProgress {
+                    name: component.name.clone(),
+                    phase: component.phase.clone(),
+                    percent: component.percent,
+                    elapsed_ms,
+                    speed_bps: if component.phase == "downloading" {
+                        meter.speed_bps
+                    } else {
+                        component.speed_bps
+                    },
+                    indeterminate: component.phase == "downloading",
+                }
+            })
+            .collect();
+        OperationProgress {
+            percent: self.percent,
+            message: self.message.clone(),
+            phase: self.phase.clone(),
+            line,
+            components,
+            speed_bps: meter.speed_bps,
+            elapsed_ms: now.duration_since(self.started).as_millis() as u64,
+            downloaded_bytes: meter.bytes,
+        }
     }
 }
 
@@ -1410,10 +1656,19 @@ where
     drop(sender);
 
     let mut text = String::new();
-    for line in receiver {
-        on_line(&line);
-        text.push_str(&line);
-        text.push('\n');
+    loop {
+        match receiver.recv_timeout(Duration::from_millis(400)) {
+            Ok(line) => {
+                if line.is_empty() {
+                    continue;
+                }
+                on_line(&line);
+                text.push_str(&line);
+                text.push('\n');
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => on_line(""),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
     }
     let _ = stdout_reader.join();
     let _ = stderr_reader.join();
@@ -1640,31 +1895,32 @@ LLVM version: 23.1.1";
 
     #[test]
     fn parses_download_progress_from_rustup_output() {
-        let mut progress = RustupProgress::default();
+        let mut progress = RustupProgress::new(Arc::new(Mutex::new(DownloadMeter::default())));
         assert_eq!(
             progress
                 .observe("info: syncing channel updates for 'stable-x86_64-pc-windows-msvc'")
-                .unwrap()
                 .percent,
             8
         );
-        let download = progress
-            .observe("info: downloading component 'rustc'")
-            .unwrap();
+        let download = progress.observe("info: downloading component 'rustc'");
         assert!(download.message.contains("rustc"));
         assert!(download.percent > 8);
-        let install = progress
-            .observe("info: installing component 'rustc'")
-            .unwrap();
+        assert_eq!(download.components[0].phase, "downloading");
+        let json = serde_json::to_value(&download).unwrap();
+        assert_eq!(json["components"][0]["name"], "rustc");
+        assert_eq!(json["components"][0]["indeterminate"], true);
+        assert!(json["speedBps"].is_number());
+        let install = progress.observe("info: installing component 'rustc'");
         assert!(install.percent > download.percent);
+        assert_eq!(install.components[0].phase, "installing");
         assert_eq!(
             progress
                 .observe("info: default toolchain set to 'stable'")
-                .unwrap()
                 .percent,
             96
         );
-        assert!(progress.observe("unrelated output").is_none());
+        let line = progress.observe("unrelated output");
+        assert_eq!(line.line.as_deref(), Some("unrelated output"));
     }
 
     #[test]

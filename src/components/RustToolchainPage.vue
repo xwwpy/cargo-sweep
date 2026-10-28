@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { listen } from "@tauri-apps/api/event";
+import { formatBytes } from "../lib/format";
 import { operationBusy as busy } from "../composables/useOperationBusy";
 import {
   CircleCheck,
@@ -42,6 +43,7 @@ import type {
   RustChannel,
   RustToolchainStatus,
   RustupSourceStatus,
+  ComponentProgress,
   ToolchainProgress,
 } from "../types";
 
@@ -100,6 +102,13 @@ const rustupMigrating = ref(false);
 const rustupMigrationError = ref<string | null>(null);
 const operationPercent = ref<number | null>(null);
 const operationMessage = ref("");
+const operationPhase = ref("verify");
+const operationComponents = ref<ComponentProgress[]>([]);
+const operationSpeed = ref(0);
+const operationDownloaded = ref(0);
+const operationLines = ref<string[]>([]);
+const operationOutputRef = ref<HTMLElement | null>(null);
+const operationComponentsAt = ref(Date.now());
 const isWindows = /Windows/i.test(navigator.userAgent);
 let timer: number | undefined;
 let unlistenProgress: (() => void) | undefined;
@@ -198,6 +207,80 @@ const busyLabel = computed(() => {
 const progressHint = computed(() =>
   busy.value ? "操作进行中，请保持应用开启；完成前应用不会关闭。" : "",
 );
+const currentOperationComponent = computed(
+  () =>
+    operationComponents.value.find(
+      (component) => component.phase === "downloading" || component.phase === "installing",
+    ) ??
+    operationComponents.value[operationComponents.value.length - 1] ??
+    null,
+);
+const operationPhaseLabel = computed(() => {
+  if (busy.value === "rustup") {
+    return "安装 rustup";
+  }
+  if (busy.value === "migrate-cargo-home") {
+    return "迁移 CARGO_HOME";
+  }
+  if (busy.value === "migrate-rustup-home") {
+    return "迁移 RUSTUP_HOME";
+  }
+  if (busy.value === "apply-rustup-source") {
+    return "切换下载源";
+  }
+  switch (operationPhase.value) {
+    case "verify":
+      return "验证版本";
+    case "download":
+      return "下载组件";
+    case "install":
+      return "安装组件";
+    case "finalize":
+      return "完成配置";
+    case "done":
+      return "完成";
+    default:
+      return "执行中";
+  }
+});
+
+function componentPhaseLabel(phase: ComponentProgress["phase"]): string {
+  switch (phase) {
+    case "downloading":
+      return "下载中";
+    case "installing":
+      return "安装中";
+    case "done":
+      return "完成";
+    default:
+      return "等待";
+  }
+}
+
+function formatSpeed(bytesPerSecond: number): string {
+  return bytesPerSecond > 0 ? `${formatBytes(bytesPerSecond)}/s` : "测速中";
+}
+
+function componentDuration(component: ComponentProgress): string {
+  // Keep reporting live elapsed time between backend output lines.
+  void elapsed.value;
+  const running =
+    component.phase === "downloading" || component.phase === "installing";
+  const extra = running ? Date.now() - operationComponentsAt.value : 0;
+  return formatDurationMs(component.elapsedMs + extra);
+}
+
+function formatDurationMs(milliseconds: number): string {
+  if (milliseconds < 1000) {
+    return `${Math.max(0, Math.round(milliseconds))}ms`;
+  }
+  if (milliseconds < 60_000) {
+    return `${(milliseconds / 1000).toFixed(1)}s`;
+  }
+  const minutes = Math.floor(milliseconds / 60_000);
+  const seconds = Math.round((milliseconds % 60_000) / 1000);
+  return `${minutes}m ${seconds}s`;
+}
 function toolchainLabel(value: string): string {
   if (value === "stable") {
     return "Stable";
@@ -600,6 +683,12 @@ function canUseAction(view: ChannelView): boolean {
 function startTimer() {
   operationPercent.value = null;
   operationMessage.value = "";
+  operationPhase.value = "verify";
+  operationComponents.value = [];
+  operationSpeed.value = 0;
+  operationDownloaded.value = 0;
+  operationLines.value = [];
+  operationComponentsAt.value = Date.now();
   elapsed.value = 0;
   window.clearInterval(timer);
   timer = window.setInterval(() => {
@@ -1150,7 +1239,27 @@ onMounted(() => {
       0,
       Math.min(100, event.payload.percent),
     );
-    operationMessage.value = event.payload.message;
+    if (event.payload.message) {
+      operationMessage.value = event.payload.message;
+    }
+    operationPhase.value = event.payload.phase || "verify";
+    operationComponents.value = event.payload.components ?? [];
+    operationComponentsAt.value = Date.now();
+    operationSpeed.value = event.payload.speedBps ?? 0;
+    operationDownloaded.value = event.payload.downloadedBytes ?? 0;
+    const line = event.payload.line?.trimEnd();
+    if (line) {
+      operationLines.value.push(line);
+      if (operationLines.value.length > 500) {
+        operationLines.value.splice(0, operationLines.value.length - 500);
+      }
+      void nextTick(() => {
+        if (operationOutputRef.value) {
+          operationOutputRef.value.scrollTop =
+            operationOutputRef.value.scrollHeight;
+        }
+      });
+    }
   })
     .then((unlisten) => {
       unlistenProgress = unlisten;
@@ -1221,15 +1330,79 @@ onUnmounted(() => {
             }}
           </span>
         </div>
+
+        <div class="operation-phase">
+          <span class="operation-phase-label">{{ operationPhaseLabel }}</span>
+          <span class="operation-phase-message">
+            {{ operationMessage || progressHint }}
+          </span>
+        </div>
         <el-progress
           :percentage="operationPercent ?? 0"
           :show-text="false"
           :indeterminate="operationPercent === null"
           :duration="1.8"
-          :stroke-width="5"
-          color="#0f766e"
+          :stroke-width="6"
+          color="#db2777"
         />
-        <p>{{ operationMessage || progressHint }}</p>
+
+        <div
+          v-if="operationComponents.length > 0 || operationDownloaded > 0"
+          class="operation-metrics"
+        >
+          <span>
+            <strong>{{ formatSpeed(operationSpeed) }}</strong>
+            当前下载速度
+          </span>
+          <span>
+            <strong>{{ formatBytes(operationDownloaded) }}</strong>
+            本次已下载
+          </span>
+          <span>
+            <strong>{{
+              currentOperationComponent
+                ? componentDuration(currentOperationComponent)
+                : formatDurationMs(0)
+            }}</strong>
+            当前组件耗时
+          </span>
+        </div>
+
+        <div v-if="operationComponents.length > 0" class="operation-components">
+          <div
+            v-for="component in operationComponents"
+            :key="component.name"
+            class="operation-component"
+            :class="component.phase"
+          >
+            <span class="operation-component-name">{{ component.name }}</span>
+            <div class="operation-component-track">
+              <span
+                :class="{ indeterminate: component.indeterminate }"
+                :style="{
+                  width: component.indeterminate
+                    ? '100%'
+                    : `${component.percent}%`,
+                }"
+              />
+            </div>
+            <span class="operation-component-phase">
+              {{ componentPhaseLabel(component.phase) }}
+            </span>
+            <span class="operation-component-meta">
+              {{ formatSpeed(component.speedBps) }} ·
+              {{ componentDuration(component) }}
+            </span>
+          </div>
+        </div>
+
+        <div v-if="operationLines.length > 0" class="operation-live-output">
+          <div class="operation-live-head">
+            <span>命令实时输出</span>
+            <small>{{ operationLines.length }} 行</small>
+          </div>
+          <pre ref="operationOutputRef">{{ operationLines.join("\n") }}</pre>
+        </div>
       </div>
 
       <div v-if="!status.installed" class="setup-banner">
@@ -2111,17 +2284,206 @@ onUnmounted(() => {
 
 .operation-progress {
   position: fixed;
-  right: 26px;
-  bottom: 22px;
+  right: 24px;
+  bottom: 20px;
   z-index: 30;
-  width: min(430px, calc(100vw - 52px));
-  padding: 11px 14px;
-  background: rgba(255, 255, 255, 0.97);
-  border: 1px solid #d1f5ec;
-  border-left: 3px solid #0f766e;
-  border-radius: 10px;
-  box-shadow: 0 18px 45px rgba(16, 24, 40, 0.16);
-  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  width: min(570px, calc(100vw - 48px));
+  max-height: min(72vh, 680px);
+  padding: 15px 17px;
+  overflow: hidden;
+  color: var(--app-ink, #241832);
+  background: var(--surface-strong, rgba(255, 255, 255, 0.96));
+  border: 1px solid var(--surface-line, rgba(139, 92, 246, 0.14));
+  border-left: 3px solid #db2777;
+  border-radius: 20px;
+  box-shadow:
+    0 26px 70px rgba(40, 10, 60, 0.24),
+    0 1px 0 rgba(255, 255, 255, 0.5) inset;
+  backdrop-filter: blur(22px);
+}
+
+.operation-phase {
+  display: flex;
+  gap: 9px;
+  align-items: baseline;
+  margin: 9px 0 3px;
+}
+
+.operation-phase-label {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  font-size: 8px;
+  font-weight: 700;
+  color: #be185d;
+  background: #fdf2f8;
+  border-radius: 999px;
+}
+
+.operation-phase-message {
+  overflow: hidden;
+  font-size: 9px;
+  color: var(--app-muted, #7d6f92);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operation-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.operation-metrics > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  font-size: 7.5px;
+  color: var(--app-muted, #7d6f92);
+  background: rgba(139, 92, 246, 0.05);
+  border: 1px solid rgba(139, 92, 246, 0.08);
+  border-radius: 9px;
+}
+
+.operation-metrics strong {
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--app-ink, #241832);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operation-components {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 9px;
+  margin-top: 9px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(139, 92, 246, 0.09);
+}
+
+.operation-component {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) 42px 108px;
+  gap: 7px;
+  align-items: center;
+}
+
+.operation-component-name {
+  overflow: hidden;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8.5px;
+  color: var(--app-ink, #241832);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operation-component-track {
+  height: 5px;
+  overflow: hidden;
+  background: rgba(139, 92, 246, 0.1);
+  border-radius: 99px;
+}
+
+.operation-component-track > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #ec4899, #8b5cf6, #22d3ee);
+  border-radius: inherit;
+  transition: width 240ms ease;
+}
+
+.operation-component-track > span.indeterminate {
+  background: linear-gradient(
+    90deg,
+    rgba(236, 72, 153, 0.22),
+    #db2777,
+    #8b5cf6,
+    rgba(236, 72, 153, 0.22)
+  );
+  background-size: 220% 100%;
+  animation: component-shimmer 1.25s linear infinite;
+}
+
+.operation-component-phase {
+  font-size: 8px;
+  color: var(--app-muted, #7d6f92);
+  text-align: right;
+}
+
+.operation-component.done .operation-component-phase {
+  color: #0d9488;
+}
+
+.operation-component-meta {
+  overflow: hidden;
+  font-size: 7.5px;
+  color: var(--app-muted, #7d6f92);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operation-live-output {
+  display: flex;
+  flex-direction: column;
+  min-height: 66px;
+  margin-top: 10px;
+  overflow: hidden;
+  background: #0d0915;
+  border: 1px solid rgba(168, 85, 247, 0.18);
+  border-radius: 12px;
+}
+
+.operation-live-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 9px;
+  font-family: "Manrope Variable", "Segoe UI", sans-serif;
+  font-size: 8px;
+  color: #d8b4fe;
+  background: rgba(168, 85, 247, 0.08);
+  border-bottom: 1px solid rgba(168, 85, 247, 0.12);
+}
+
+.operation-live-head small {
+  font-size: 7.5px;
+  color: #8b7a9e;
+}
+
+.operation-live-output pre {
+  flex: 1;
+  max-height: 150px;
+  padding: 8px 10px;
+  margin: 0;
+  overflow: auto;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 7.8px;
+  line-height: 1.65;
+  color: #c4b5d7;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.operation-live-output pre::-webkit-scrollbar {
+  width: 6px;
+}
+
+@keyframes component-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -20% 0;
+  }
 }
 
 .operation-progress-head {

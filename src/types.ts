@@ -159,9 +159,24 @@ export interface RustupMirror {
   updateRoot: string;
 }
 
+export interface ComponentProgress {
+  name: string;
+  phase: "waiting" | "downloading" | "installing" | "done";
+  percent: number;
+  elapsedMs: number;
+  speedBps: number;
+  indeterminate: boolean;
+}
+
 export interface ToolchainProgress {
   percent: number;
   message: string;
+  phase: string;
+  line: string | null;
+  components: ComponentProgress[];
+  speedBps: number;
+  elapsedMs: number;
+  downloadedBytes: number;
 }
 
 export interface RustupSourceStatus {
