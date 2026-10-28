@@ -162,6 +162,9 @@ const busyLabel = computed(() => {
   if (value.startsWith("install-")) {
     return `正在下载并安装 ${toolchainLabel(value.slice("install-".length))}`;
   }
+  if (value.startsWith("verify-")) {
+    return `正在校验 ${toolchainLabel(value.slice("verify-".length))} 版本`;
+  }
   if (value.startsWith("update-")) {
     return `正在更新 ${toolchainLabel(value.slice("update-".length))}`;
   }
@@ -565,6 +568,9 @@ function actionLabel(view: ChannelView): string {
   if (!view.installed) {
     return "安装";
   }
+  if (busy.value === `verify-${view.key}`) {
+    return "校验中";
+  }
   if (latestLoading.value) {
     return "检测中";
   }
@@ -602,17 +608,51 @@ function stopTimer() {
   timer = undefined;
 }
 
+async function refreshLatestVersions(): Promise<LatestRustVersions> {
+  const next = await checkRustToolchainLatest();
+  latest.value = next;
+  latestError.value = next.error;
+  return next;
+}
+
 async function loadLatest() {
   latestLoading.value = true;
   latestError.value = null;
   try {
-    latest.value = await checkRustToolchainLatest();
-    latestError.value = latest.value.error;
+    await refreshLatestVersions();
   } catch (reason) {
     latestError.value = errorMessage(reason);
   } finally {
     latestLoading.value = false;
   }
+}
+
+function channelVersion(
+  toolchainStatus: RustToolchainStatus,
+  key: "stable" | "nightly",
+): RustChannel | null {
+  return toolchainStatus.channels.find((channel) => channel.channel === key) ?? null;
+}
+
+function latestChannelVersion(
+  versions: LatestRustVersions,
+  key: "stable" | "nightly",
+): LatestRustToolchain | null {
+  return key === "stable" ? versions.stable : versions.nightly;
+}
+
+function isChannelAtLatest(
+  toolchainStatus: RustToolchainStatus,
+  versions: LatestRustVersions,
+  key: "stable" | "nightly",
+): boolean {
+  const current = channelVersion(toolchainStatus, key);
+  const target = latestChannelVersion(versions, key);
+  return Boolean(
+    current?.installed &&
+      target &&
+      sameVersion(current.rustcVersion, `rustc ${target.version}`),
+  );
 }
 
 async function loadCargoHome() {
@@ -968,11 +1008,81 @@ async function installChannel(view: ChannelView) {
 }
 
 async function updateChannel(view: ChannelView) {
-  await runOperation(
-    `update-${view.key}`,
-    () => updateRustToolchain(view.toolchain ?? view.key),
-    `${view.label} 工具链已更新`,
-  );
+  if (busy.value) {
+    return;
+  }
+  busy.value = `verify-${view.key}`;
+  actionOutput.value = null;
+  actionSuccess.value = null;
+  startTimer();
+  try {
+    // A click must always validate both the installed build and the remote
+    // build again; stale channel cards must not trigger an unnecessary update.
+    const [freshStatus, freshLatest] = await Promise.all([
+      detectRustToolchain(),
+      checkRustToolchainLatest(),
+    ]);
+    status.value = freshStatus;
+    latest.value = freshLatest;
+    latestError.value = freshLatest.error;
+    const target = latestChannelVersion(freshLatest, view.key);
+    if (!target) {
+      actionOutput.value = "无法获取最新版本，已取消更新。";
+      actionSuccess.value = false;
+      ElMessage.error("无法获取最新版本，已取消更新");
+      return;
+    }
+    if (isChannelAtLatest(freshStatus, freshLatest, view.key)) {
+      actionOutput.value = `${view.label} 当前已是 ${target.release}，无需再次更新。`;
+      actionSuccess.value = true;
+      ElMessage.success(`${view.label} 已经是最新版本`);
+      return;
+    }
+
+    busy.value = `update-${view.key}`;
+    startTimer();
+    const result = await updateRustToolchain(view.toolchain ?? view.key);
+    status.value = result.status;
+    actionOutput.value = result.output;
+    actionSuccess.value = result.success;
+
+    let latestAfter: LatestRustVersions;
+    try {
+      latestAfter = await refreshLatestVersions();
+    } catch (reason) {
+      actionOutput.value = `${result.output}\n\n更新命令已结束，但二次检查最新版本失败：${errorMessage(reason)}`;
+      ElMessage.warning("更新命令已结束，但无法确认最新版本");
+      return;
+    }
+    const targetAfter = latestChannelVersion(latestAfter, view.key);
+    if (!targetAfter) {
+      actionOutput.value = `${result.output}\n\n更新命令已结束，但未获取到最新版本。`;
+      actionSuccess.value = false;
+      ElMessage.warning("更新命令已结束，但未获取到最新版本");
+      return;
+    }
+    if (isChannelAtLatest(result.status, latestAfter, view.key)) {
+      actionSuccess.value = result.success;
+      actionOutput.value = `已确认 ${view.label} 更新到 ${targetAfter.release}。\n\n${result.output}`;
+      if (result.success) {
+        ElMessage.success(`${view.label} 已更新到最新版本`);
+      } else {
+        ElMessage.warning("更新命令返回失败，但当前版本已与最新版本一致");
+      }
+      return;
+    }
+
+    actionSuccess.value = false;
+    actionOutput.value = `${result.output}\n\n二次校验失败：当前版本仍与最新版本 ${targetAfter.release} 不一致，请检查网络、Rustup 下载源或稍后重试。`;
+    ElMessage.warning("更新已执行，但二次校验仍未检测到最新版本");
+  } catch (reason) {
+    actionOutput.value = errorMessage(reason);
+    actionSuccess.value = false;
+    ElMessage.error(`更新失败：${errorMessage(reason)}`);
+  } finally {
+    stopTimer();
+    busy.value = null;
+  }
 }
 
 async function switchChannel(view: ChannelView) {
@@ -1459,7 +1569,10 @@ onUnmounted(() => {
               v-else
               :type="channel.updateAvailable ? 'primary' : 'default'"
               :disabled="!canUseAction(channel)"
-              :loading="busy === `update-${channel.key}`"
+              :loading="
+                busy === `update-${channel.key}` ||
+                busy === `verify-${channel.key}`
+              "
               @click="updateChannel(channel)"
             >
               <el-icon><Refresh /></el-icon>
