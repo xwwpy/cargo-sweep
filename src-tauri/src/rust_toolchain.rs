@@ -90,6 +90,7 @@ struct AppSettings {
 
 pub fn probe() -> RustInstallationProbe {
     crate::cargo_home::apply_saved_homes();
+    crate::rustup_source::apply_saved_source();
     let rustup_path = prepare_rust_environment();
     let rustc_version = run("rustc", &["--version"])
         .ok()
@@ -107,6 +108,7 @@ pub fn probe() -> RustInstallationProbe {
 
 pub fn detect() -> Result<RustToolchainStatus, String> {
     crate::cargo_home::apply_saved_homes();
+    crate::rustup_source::apply_saved_source();
     let rustup_path = prepare_rust_environment();
     let settings = read_settings();
     let rustup_version = run("rustup", &["--version"])
@@ -441,6 +443,7 @@ pub fn set_rustup_path(path: String) -> Result<RustToolchainStatus, String> {
 }
 
 pub fn install_rustup() -> Result<ToolchainOperationResult, String> {
+    crate::rustup_source::apply_saved_source();
     prepare_rust_environment();
     if run("rustup", &["--version"]).is_ok() {
         return Err("已检测到 rustup，无需重复安装。".into());

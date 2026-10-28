@@ -1,6 +1,7 @@
 mod cargo_home;
 mod cargo_source;
 mod rust_toolchain;
+mod rustup_source;
 mod scanner;
 
 use cargo_home::{CargoHomeMigrationResult, CargoHomeStatus};
@@ -8,6 +9,7 @@ use cargo_source::{ApplySourceResult, CargoSourceStatus};
 use rust_toolchain::{
     LatestRustVersions, RustInstallationProbe, RustToolchainStatus, ToolchainOperationResult,
 };
+use rustup_source::RustupSourceStatus;
 use scanner::{DeleteResult, ScanProgress, ScanResult};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -133,6 +135,24 @@ async fn apply_cargo_source(url: String) -> Result<ApplySourceResult, String> {
 #[tauri::command]
 fn cargo_home_status() -> Result<CargoHomeStatus, String> {
     cargo_home::status()
+}
+
+#[tauri::command]
+fn rustup_source_status() -> Result<RustupSourceStatus, String> {
+    rustup_source::status()
+}
+
+#[tauri::command]
+async fn apply_rustup_source(
+    source_id: String,
+    dist_server: Option<String>,
+    update_root: Option<String>,
+) -> Result<RustupSourceStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        rustup_source::apply(source_id, dist_server, update_root)
+    })
+    .await
+    .map_err(|error| format!("切换 Rustup 下载源任务异常退出：{error}"))?
 }
 
 #[tauri::command]
@@ -304,6 +324,8 @@ pub fn run() {
             delete_targets,
             default_scan_roots,
             cargo_home_status,
+            rustup_source_status,
+            apply_rustup_source,
             migrate_cargo_home,
             migrate_rustup_home,
             set_home_path,

@@ -19,6 +19,8 @@ import {
   detectRustToolchain,
   errorMessage,
   getCargoHomeStatus,
+  getRustupSourceStatus,
+  applyRustupSource,
   installRustup,
   installRustToolchain,
   migrateCargoHome,
@@ -38,6 +40,7 @@ import type {
   LatestRustVersions,
   RustChannel,
   RustToolchainStatus,
+  RustupSourceStatus,
 } from "../types";
 
 interface ChannelView {
@@ -74,6 +77,11 @@ const customTarget = ref("");
 const rustupPathInput = ref("");
 const cargoHome = ref<CargoHomeStatus | null>(null);
 const cargoHomeError = ref<string | null>(null);
+const rustupSource = ref<RustupSourceStatus | null>(null);
+const rustupSourceError = ref<string | null>(null);
+const selectedSourceId = ref("official");
+const customDistServer = ref("");
+const customUpdateRoot = ref("");
 const cargoHomeDialog = ref(false);
 const cargoHomeTarget = ref("");
 const createCargoLink = ref(true);
@@ -170,6 +178,9 @@ const busyLabel = computed(() => {
   if (value === "configure-rustup") {
     return "正在更新 RUSTUP_HOME 配置";
   }
+  if (value === "apply-rustup-source") {
+    return "正在切换 Rustup 下载源";
+  }
   return "正在处理，请稍候";
 });
 const progressHint = computed(() =>
@@ -247,6 +258,35 @@ const rustupInstallCommand = computed(() =>
   isWindows
     ? "winget install --id Rustlang.Rustup -e --silent --accept-package-agreements --accept-source-agreements"
     : "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+);
+const selectedMirror = computed(() =>
+  rustupSource.value?.mirrors.find(
+    (mirror) => mirror.id === selectedSourceId.value,
+  ),
+);
+const sourceDistServer = computed(() =>
+  selectedSourceId.value === "custom"
+    ? customDistServer.value.trim()
+    : selectedMirror.value?.distServer ?? "",
+);
+const sourceUpdateRoot = computed(() =>
+  selectedSourceId.value === "custom"
+    ? customUpdateRoot.value.trim()
+    : selectedMirror.value?.updateRoot ?? "",
+);
+const sourceCommand = computed(() =>
+  buildSourceCommand(
+    selectedSourceId.value,
+    sourceDistServer.value,
+    sourceUpdateRoot.value,
+  ),
+);
+const sourceApplyDisabled = computed(
+  () =>
+    Boolean(busy.value) ||
+    !rustupSource.value ||
+    !sourceDistServer.value ||
+    !sourceUpdateRoot.value,
 );
 const manualCommands = computed<CommandEntry[]>(() => {
   const entries: CommandEntry[] = [
@@ -577,10 +617,91 @@ async function loadCargoHome() {
   }
 }
 
+async function loadRustupSource() {
+  rustupSourceError.value = null;
+  try {
+    const next = await getRustupSourceStatus();
+    rustupSource.value = next;
+    selectedSourceId.value = next.currentId;
+    customDistServer.value = next.distServer;
+    customUpdateRoot.value = next.updateRoot;
+  } catch (reason) {
+    rustupSourceError.value = errorMessage(reason);
+  }
+}
+
+function selectSource(sourceId: string) {
+  selectedSourceId.value = sourceId;
+  if (sourceId === "custom" && rustupSource.value) {
+    customDistServer.value = rustupSource.value.distServer;
+    customUpdateRoot.value = rustupSource.value.updateRoot;
+  }
+}
+
+function buildSourceCommand(
+  sourceId: string,
+  distServer: string,
+  updateRoot: string,
+): string {
+  if (sourceId === "official") {
+    return isWindows
+      ? [
+          'reg delete "HKCU\\Environment" /v RUSTUP_DIST_SERVER /f',
+          'reg delete "HKCU\\Environment" /v RUSTUP_UPDATE_ROOT /f',
+        ].join("\n")
+      : [
+          "unset RUSTUP_DIST_SERVER RUSTUP_UPDATE_ROOT",
+          "# 删除 ~/.zprofile 或 ~/.profile 中由 Cargo Sweep 写入的 RUSTUP_DIST_SERVER/RUSTUP_UPDATE_ROOT 块",
+        ].join("\n");
+  }
+  return isWindows
+    ? [
+        `setx RUSTUP_DIST_SERVER ${quoteShell(distServer)}`,
+        `setx RUSTUP_UPDATE_ROOT ${quoteShell(updateRoot)}`,
+      ].join("\n")
+    : [
+        "# 将以下 export 加入 ~/.zprofile 或 ~/.profile",
+        `export RUSTUP_DIST_SERVER=${quoteShell(distServer)}`,
+        `export RUSTUP_UPDATE_ROOT=${quoteShell(updateRoot)}`,
+      ].join("\n");
+}
+
+async function applySource() {
+  if (sourceApplyDisabled.value) {
+    return;
+  }
+  busy.value = "apply-rustup-source";
+  actionOutput.value = null;
+  actionSuccess.value = null;
+  startTimer();
+  try {
+    const status = await applyRustupSource(
+      selectedSourceId.value,
+      selectedSourceId.value === "custom" ? sourceDistServer.value : null,
+      selectedSourceId.value === "custom" ? sourceUpdateRoot.value : null,
+    );
+    rustupSource.value = status;
+    selectedSourceId.value = status.currentId;
+    customDistServer.value = status.distServer;
+    customUpdateRoot.value = status.updateRoot;
+    actionOutput.value = `Rustup 下载源已切换为 ${status.currentName}`;
+    actionSuccess.value = true;
+    ElMessage.success("Rustup 下载源已更新");
+  } catch (reason) {
+    actionOutput.value = errorMessage(reason);
+    actionSuccess.value = false;
+    ElMessage.error("切换下载源失败，请查看日志");
+  } finally {
+    stopTimer();
+    busy.value = null;
+  }
+}
+
 async function load() {
   loading.value = true;
   error.value = null;
   void loadCargoHome();
+  void loadRustupSource();
   try {
     status.value = await detectRustToolchain();
     rustupPathInput.value =
@@ -1137,6 +1258,110 @@ onUnmounted(stopTimer);
       <div v-else-if="cargoHomeError" class="cargo-home-error">
         <el-icon><WarningFilled /></el-icon>
         {{ cargoHomeError }}
+      </div>
+
+      <section v-if="rustupSource" class="rustup-source-card">
+        <div class="source-head">
+          <div>
+            <span class="section-kicker">RUSTUP MIRROR</span>
+            <h2>Rustup 下载源</h2>
+            <p>影响 rustup 工具链和 rustup 自身的下载。</p>
+          </div>
+          <span class="source-current-badge">
+            {{ rustupSource.currentName }}
+          </span>
+        </div>
+
+        <div class="source-current">
+          <span>当前配置</span>
+          <code>{{ rustupSource.distServer }}</code>
+          <code>{{ rustupSource.updateRoot }}</code>
+          <small>{{ rustupSource.envConfigured ? "用户环境变量" : "默认官方源" }}</small>
+        </div>
+
+        <div class="source-options">
+          <button
+            v-for="mirror in rustupSource.mirrors"
+            :key="mirror.id"
+            type="button"
+            class="source-option"
+            :class="{ active: selectedSourceId === mirror.id }"
+            :disabled="Boolean(busy)"
+            @click="selectSource(mirror.id)"
+          >
+            {{ mirror.name }}
+          </button>
+          <button
+            type="button"
+            class="source-option"
+            :class="{ active: selectedSourceId === 'custom' }"
+            :disabled="Boolean(busy)"
+            @click="selectSource('custom')"
+          >
+            自定义
+          </button>
+        </div>
+
+        <div v-if="selectedSourceId === 'custom'" class="source-custom">
+          <el-input
+            v-model="customDistServer"
+            placeholder="RUSTUP_DIST_SERVER，例如 https://rsproxy.cn"
+            :disabled="Boolean(busy)"
+          />
+          <el-input
+            v-model="customUpdateRoot"
+            placeholder="RUSTUP_UPDATE_ROOT，例如 https://rsproxy.cn/rustup"
+            :disabled="Boolean(busy)"
+          />
+        </div>
+
+        <div class="source-preview">
+          <div>
+            <span>RUSTUP_DIST_SERVER</span>
+            <code>{{ sourceDistServer || "未填写" }}</code>
+          </div>
+          <div>
+            <span>RUSTUP_UPDATE_ROOT</span>
+            <code>{{ sourceUpdateRoot || "未填写" }}</code>
+          </div>
+        </div>
+
+        <div class="source-command">
+          <div class="source-command-head">
+            <span>等价命令</span>
+            <button
+              class="copy-button"
+              type="button"
+              title="复制下载源命令"
+              @click="copyText(sourceCommand)"
+            >
+              <el-icon><CopyDocument /></el-icon>
+            </button>
+          </div>
+          <pre>{{ sourceCommand }}</pre>
+        </div>
+
+        <div class="source-actions">
+          <el-button
+            type="primary"
+            :loading="busy === 'apply-rustup-source'"
+            :disabled="sourceApplyDisabled"
+            @click="applySource"
+          >
+            应用下载源
+          </el-button>
+          <el-button :disabled="Boolean(busy)" @click="loadRustupSource">
+            重新检测
+          </el-button>
+        </div>
+        <p class="source-hint">
+          写入用户环境变量；已打开的终端需要重新打开后才会使用新下载源。
+        </p>
+      </section>
+
+      <div v-else-if="rustupSourceError" class="cargo-home-error">
+        <el-icon><WarningFilled /></el-icon>
+        {{ rustupSourceError }}
       </div>
 
       <div class="channel-grid">
@@ -2292,6 +2517,221 @@ onUnmounted(stopTimer);
   border-radius: 6px;
 }
 
+.rustup-source-card {
+  padding: 15px 16px;
+  margin-top: 12px;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 12px;
+}
+
+.source-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.source-head h2 {
+  margin: 0;
+  font-family: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+  font-weight: 650;
+  color: #344054;
+}
+
+.source-head p {
+  margin: 4px 0 0;
+  font-size: 8.5px;
+  color: #98a2b3;
+}
+
+.source-current-badge {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  font-size: 8px;
+  font-weight: 600;
+  color: #0f766e;
+  background: #ecfdf5;
+  border: 1px solid #c8f1e7;
+  border-radius: 999px;
+}
+
+.source-current {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 7px 8px;
+  margin-top: 9px;
+  background: #f8fafc;
+  border: 1px solid #eef0f3;
+  border-radius: 7px;
+}
+
+.source-current > span {
+  grid-column: 1;
+  grid-row: 1;
+  font-size: 8px;
+  color: #98a2b3;
+}
+
+.source-current code {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8px;
+  color: #475467;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-current > code:first-of-type {
+  grid-row: 1;
+}
+
+.source-current > code:last-of-type {
+  grid-row: 2;
+}
+
+.source-current small {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  font-size: 7.5px;
+  color: #98a2b3;
+  white-space: nowrap;
+}
+
+.source-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.source-option {
+  height: 25px;
+  padding: 0 9px;
+  font-size: 8px;
+  color: #667085;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 6px;
+}
+
+.source-option:hover {
+  color: #0f766e;
+  border-color: #b8e8df;
+}
+
+.source-option.active {
+  color: #0f766e;
+  background: #f0fdfa;
+  border-color: #99f6e4;
+  font-weight: 650;
+}
+
+.source-custom {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.source-custom :deep(.el-input__wrapper) {
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px #e4e7ec inset;
+}
+
+.source-custom :deep(.el-input__inner) {
+  height: 28px;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8px;
+}
+
+.source-preview {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.source-preview > div {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+}
+
+.source-preview span {
+  font-size: 7.5px;
+  color: #98a2b3;
+}
+
+.source-preview code {
+  min-width: 0;
+  overflow: hidden;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8px;
+  color: #475467;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-command {
+  padding: 7px 8px;
+  margin-top: 8px;
+  background: #f8fafc;
+  border: 1px solid #eef0f3;
+  border-radius: 7px;
+}
+
+.source-command-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 8px;
+  font-weight: 600;
+  color: #667085;
+}
+
+.source-command pre {
+  max-height: 100px;
+  padding: 0;
+  margin: 0;
+  overflow: auto;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8px;
+  line-height: 1.6;
+  color: #475467;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.source-actions {
+  display: flex;
+  gap: 7px;
+  justify-content: flex-end;
+  margin-top: 9px;
+}
+
+.source-actions :deep(.el-button) {
+  height: 27px;
+  padding: 0 11px;
+  font-size: 8px;
+  border-radius: 6px;
+}
+
+.source-hint {
+  margin: 6px 0 0;
+  font-size: 7.5px;
+  color: #98a2b3;
+  text-align: right;
+}
+
 .channel-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2858,6 +3298,22 @@ onUnmounted(stopTimer);
   }
 
   .manual-command {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .source-current {
+    grid-template-columns: 1fr;
+  }
+
+  .source-current > span,
+  .source-current code,
+  .source-current small {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .source-preview > div {
     grid-template-columns: 1fr;
     gap: 2px;
   }

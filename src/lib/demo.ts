@@ -8,6 +8,7 @@ import type {
   RustInstallationProbe,
   RustToolchainOperationResult,
   RustToolchainStatus,
+  RustupSourceStatus,
   ScanResult,
   TargetInfo,
 } from "../types";
@@ -107,6 +108,73 @@ export async function demoApplyCargoSource(url: string): Promise<ApplyCargoSourc
       url === OFFICIAL_INDEX ? null : "C:\\Users\\PC\\.cargo\\config.toml.cargo-sweep-backup-demo",
     status,
   };
+}
+
+const demoRustupMirrors = [
+  {
+    id: "official",
+    name: "官方源",
+    distServer: "https://static.rust-lang.org",
+    updateRoot: "https://static.rust-lang.org/rustup",
+  },
+  {
+    id: "tuna",
+    name: "清华 TUNA",
+    distServer: "https://mirrors.tuna.tsinghua.edu.cn/rustup",
+    updateRoot: "https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup",
+  },
+  {
+    id: "ustc",
+    name: "中科大 USTC",
+    distServer: "https://mirrors.ustc.edu.cn/rust-static",
+    updateRoot: "https://mirrors.ustc.edu.cn/rust-static/rustup",
+  },
+  {
+    id: "aliyun",
+    name: "阿里云",
+    distServer: "https://mirrors.aliyun.com/rustup",
+    updateRoot: "https://mirrors.aliyun.com/rustup/rustup",
+  },
+  {
+    id: "rsproxy",
+    name: "rsproxy.cn",
+    distServer: "https://rsproxy.cn",
+    updateRoot: "https://rsproxy.cn/rustup",
+  },
+];
+let demoRustupSourceId = "official";
+let demoRustupDist = "https://static.rust-lang.org";
+let demoRustupUpdate = "https://static.rust-lang.org/rustup";
+
+export async function demoRustupSourceStatus(): Promise<RustupSourceStatus> {
+  await new Promise((resolve) => window.setTimeout(resolve, 300));
+  const mirror = demoRustupMirrors.find((item) => item.id === demoRustupSourceId);
+  return {
+    currentId: demoRustupSourceId,
+    currentName: mirror?.name ?? "自定义",
+    distServer: demoRustupDist,
+    updateRoot: demoRustupUpdate,
+    envConfigured: demoRustupSourceId !== "official",
+    mirrors: demoRustupMirrors,
+  };
+}
+
+export async function demoApplyRustupSource(
+  sourceId: string,
+  distServer: string | null,
+  updateRoot: string | null,
+): Promise<RustupSourceStatus> {
+  await new Promise((resolve) => window.setTimeout(resolve, 500));
+  const mirror = demoRustupMirrors.find((item) => item.id === sourceId);
+  demoRustupSourceId = sourceId;
+  if (mirror) {
+    demoRustupDist = mirror.distServer;
+    demoRustupUpdate = mirror.updateRoot;
+  } else {
+    demoRustupDist = distServer ?? "";
+    demoRustupUpdate = updateRoot ?? "";
+  }
+  return demoRustupSourceStatus();
 }
 
 let demoCargoHome = "C:\\Users\\demo\\.cargo";

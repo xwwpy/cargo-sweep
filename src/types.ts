@@ -151,3 +151,19 @@ export interface CargoHomeMigrationResult {
   output: string;
   status: CargoHomeStatus;
 }
+
+export interface RustupMirror {
+  id: string;
+  name: string;
+  distServer: string;
+  updateRoot: string;
+}
+
+export interface RustupSourceStatus {
+  currentId: string;
+  currentName: string;
+  distServer: string;
+  updateRoot: string;
+  envConfigured: boolean;
+  mirrors: RustupMirror[];
+}

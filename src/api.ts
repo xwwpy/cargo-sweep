@@ -11,11 +11,13 @@ import type {
   RustInstallationProbe,
   RustToolchainOperationResult,
   RustToolchainStatus,
+  RustupSourceStatus,
   ScanProgress,
   ScanResult,
 } from "./types";
 import {
   demoApplyCargoSource,
+  demoApplyRustupSource,
   demoCargoHomeStatus,
   demoCargoSourceStatus,
   demoCheckRustLatest,
@@ -31,6 +33,7 @@ import {
   demoProbeRustInstallation,
   demoRoots,
   demoRustToolchainStatus,
+  demoRustupSourceStatus,
   demoScan,
   demoSetDefaultRustToolchain,
   demoSetRustupPath,
@@ -103,6 +106,34 @@ export async function getCargoHomeStatus(): Promise<CargoHomeStatus> {
     throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
   }
   return invoke<CargoHomeStatus>("cargo_home_status");
+}
+
+export async function getRustupSourceStatus(): Promise<RustupSourceStatus> {
+  if (isDemoMode()) {
+    return demoRustupSourceStatus();
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<RustupSourceStatus>("rustup_source_status");
+}
+
+export async function applyRustupSource(
+  sourceId: string,
+  distServer: string | null,
+  updateRoot: string | null,
+): Promise<RustupSourceStatus> {
+  if (isDemoMode()) {
+    return demoApplyRustupSource(sourceId, distServer, updateRoot);
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<RustupSourceStatus>("apply_rustup_source", {
+    sourceId,
+    distServer,
+    updateRoot,
+  });
 }
 
 export async function migrateCargoHome(

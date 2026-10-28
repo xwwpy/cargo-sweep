@@ -738,6 +738,58 @@ html.dark .rustup-actions .el-input__inner {
   color: #f5e6d3;
 }
 
+html.dark .rustup-source-card {
+  background: #0f1726;
+  border-color: #1f2d40;
+}
+
+html.dark .source-head h2 {
+  color: #d7e2ef;
+}
+
+html.dark .source-head p,
+html.dark .source-preview span,
+html.dark .source-current > span,
+html.dark .source-current small,
+html.dark .source-hint {
+  color: #7f8ea3;
+}
+
+html.dark .source-current-badge {
+  color: #5eead4;
+  background: #0b2926;
+  border-color: #1f4f49;
+}
+
+html.dark .source-current,
+html.dark .source-command {
+  background: #0b1422;
+  border-color: #1e2b3c;
+}
+
+html.dark .source-current code,
+html.dark .source-preview code,
+html.dark .source-command pre {
+  color: #a9b8c9;
+}
+
+html.dark .source-option {
+  color: #9fb0c4;
+  background: #111e2e;
+  border-color: #243244;
+}
+
+html.dark .source-option:hover {
+  color: #5eead4;
+  border-color: #1f4f49;
+}
+
+html.dark .source-option.active {
+  color: #5eead4;
+  background: #0b2926;
+  border-color: #1f4f49;
+}
+
 html.dark .command-line,
 html.dark .migration-command {
   background: #0b1422;
