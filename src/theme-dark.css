@@ -911,7 +911,8 @@ html.dark .channel-name {
 }
 
 html.dark .channel-sub,
-html.dark .version-label {
+html.dark .version-label,
+html.dark .build-label {
   color: #7f8ea3;
 }
 

@@ -527,20 +527,13 @@ fn create_directory_link(link: &Path, target: &Path) -> Result<(), String> {
     }
     #[cfg(windows)]
     {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "mklink", "/J"]).arg(link).arg(target);
-        apply_no_window(&mut command);
-        let output = command
-            .output()
-            .map_err(|error| format!("无法创建目录链接：{error}"))?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "创建目录链接失败：{}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ))
-        }
+        junction::create(target, link).map_err(|error| {
+            format!(
+                "创建目录链接 {} -> {} 失败：{error}",
+                display(link),
+                display(target)
+            )
+        })
     }
 }
 

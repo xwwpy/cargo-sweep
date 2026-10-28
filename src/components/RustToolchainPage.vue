@@ -46,8 +46,10 @@ interface ChannelView {
   toolchain: string | null;
   currentRelease: string | null;
   currentFull: string | null;
+  currentBuild: string | null;
   latest: LatestRustToolchain | null;
   latestRelease: string | null;
+  latestBuild: string | null;
   updateAvailable: boolean | null;
   active: boolean;
   default: boolean;
@@ -103,6 +105,8 @@ const currentChannel = computed(
 const activeLatest = computed(() => currentChannel.value?.latest ?? null);
 const currentVersion = computed(() => status.value?.version ?? null);
 const latestVersion = computed(() => activeLatest.value?.release ?? null);
+const currentBuild = computed(() => currentChannel.value?.currentBuild ?? null);
+const latestBuild = computed(() => currentChannel.value?.latestBuild ?? null);
 const currentIsLatest = computed(() => {
   const current = currentChannel.value;
   if (!current?.installed || !current.latest) {
@@ -110,6 +114,11 @@ const currentIsLatest = computed(() => {
   }
   return sameVersion(current.currentFull, `rustc ${current.latest.version}`);
 });
+const currentIsNewBuild = computed(
+  () =>
+    currentIsLatest.value === false &&
+    currentChannel.value?.currentRelease === currentChannel.value?.latestRelease,
+);
 const historyOptions = computed(() => latest.value?.historicalVersions ?? []);
 const installedToolchains = computed(() => status.value?.toolchains ?? []);
 const busyLabel = computed(() => {
@@ -239,8 +248,12 @@ function channelView(
     toolchain: info?.toolchain ?? null,
     currentRelease: info?.release ?? null,
     currentFull,
+    currentBuild: buildLabel(currentFull, null),
     latest: latestInfo,
     latestRelease: latestInfo?.release ?? null,
+    latestBuild: latestInfo
+      ? buildLabel(`rustc ${latestInfo.version}`, latestInfo.date)
+      : null,
     updateAvailable:
       info?.installed && latestInfo && currentFull
         ? !sameVersion(currentFull, `rustc ${latestInfo.version}`)
@@ -254,7 +267,35 @@ function sameVersion(left: string | null, right: string | null): boolean {
   if (!left || !right) {
     return false;
   }
-  return left.replace(/^rustc\s+/, "").trim() === right.replace(/^rustc\s+/, "").trim();
+  return versionIdentity(left) === versionIdentity(right);
+}
+
+function versionIdentity(value: string): string {
+  const build = value.match(/\(([0-9a-f]+)\s+(\d{4}-\d{2}-\d{2})\)/i);
+  if (build) {
+    return `${build[1].toLowerCase()} ${build[2]}`;
+  }
+  return value.replace(/^rustc\s+/, "").trim();
+}
+
+function buildLabel(
+  fullVersion: string | null,
+  fallbackDate: string | null,
+): string | null {
+  if (fullVersion) {
+    const match = fullVersion.match(
+      /\(([0-9a-f]+)(?:\s+(\d{4}-\d{2}-\d{2}))?\)/i,
+    );
+    if (match) {
+      const hash = match[1].slice(0, 7);
+      return match[2] ? `${match[2]} · ${hash}` : hash;
+    }
+    const date = fullVersion.match(/\d{4}-\d{2}-\d{2}/);
+    if (date) {
+      return date[0];
+    }
+  }
+  return fallbackDate;
 }
 
 function channelState(view: ChannelView): string {
@@ -269,6 +310,9 @@ function channelState(view: ChannelView): string {
   }
   if (view.updateAvailable === false) {
     return "已是最新";
+  }
+  if (view.currentRelease === view.latestRelease) {
+    return `有新构建${view.latestBuild ? ` · ${view.latestBuild}` : ""}`;
   }
   return `可更新到 ${view.latestRelease}`;
 }
@@ -773,6 +817,7 @@ onUnmounted(stopTimer);
           <span class="panel-label">当前默认工具链</span>
           <h2>{{ currentVersion || "未知版本" }}</h2>
           <code>{{ status.activeToolchain || status.defaultToolchain || "未设置默认工具链" }}</code>
+          <span v-if="currentBuild" class="current-build">{{ currentBuild }}</span>
         </div>
         <div class="current-latest">
           <span>最新版本</span>
@@ -780,8 +825,11 @@ onUnmounted(stopTimer);
             <template v-if="latestLoading">检测中…</template>
             <template v-else>{{ latestVersion || "未获取" }}</template>
           </strong>
+          <small v-if="latestBuild">{{ latestBuild }}</small>
           <em v-if="currentIsLatest === true">已是最新</em>
-          <em v-else-if="currentIsLatest === false" class="update-hint">有新版本</em>
+          <em v-else-if="currentIsLatest === false" class="update-hint">
+            {{ currentIsNewBuild ? "有新构建" : "有新版本" }}
+          </em>
         </div>
       </section>
 
@@ -905,6 +953,9 @@ onUnmounted(stopTimer);
             <div>
               <span class="version-label">当前</span>
               <strong>{{ channel.currentRelease || "—" }}</strong>
+              <span v-if="channel.currentBuild" class="build-label">
+                {{ channel.currentBuild }}
+              </span>
             </div>
             <span class="version-arrow">→</span>
             <div>
@@ -913,6 +964,9 @@ onUnmounted(stopTimer);
                 <template v-if="latestLoading">检测中…</template>
                 <template v-else>{{ channel.latestRelease || "未知" }}</template>
               </strong>
+              <span v-if="channel.latestBuild" class="build-label">
+                {{ channel.latestBuild }}
+              </span>
             </div>
           </div>
 
@@ -1574,6 +1628,21 @@ onUnmounted(stopTimer);
   white-space: nowrap;
 }
 
+.current-build {
+  display: block;
+  margin-top: 3px;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8px;
+  color: #77a39b;
+}
+
+.current-latest small {
+  font-family: "Manrope Variable", "Segoe UI", sans-serif;
+  font-size: 8px;
+  color: #8fb6b0;
+  font-variant-numeric: tabular-nums;
+}
+
 .current-latest {
   display: flex;
   flex: 0 0 auto;
@@ -2029,6 +2098,14 @@ onUnmounted(stopTimer);
 
 .version-pair > div:last-child strong {
   color: #0f766e;
+}
+
+.build-label {
+  margin-top: 1px;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 7.5px;
+  color: #98a2b3;
+  font-variant-numeric: tabular-nums;
 }
 
 .version-arrow {

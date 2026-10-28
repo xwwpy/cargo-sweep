@@ -446,6 +446,23 @@ pub fn install_rustup() -> Result<ToolchainOperationResult, String> {
         return Err("已检测到 rustup，无需重复安装。".into());
     }
 
+    #[cfg(windows)]
+    if let Some(winget_result) = install_rustup_with_winget() {
+        let mut text =
+            winget_result.map_err(|error| format!("winget 安装 rustup 失败：{error}"))?;
+        prepare_rust_environment();
+        if run("rustup", &["--version"]).is_ok() {
+            ensure_stable_toolchain(&mut text)?;
+            let status = detect()?;
+            return Ok(ToolchainOperationResult {
+                success: true,
+                output: text,
+                status,
+            });
+        }
+        return Err("winget 已结束，但未检测到 rustup，请检查 winget 输出。".into());
+    }
+
     let target = rustup_target()?;
     let executable_name = if cfg!(windows) {
         "rustup-init.exe"
@@ -471,10 +488,14 @@ pub fn install_rustup() -> Result<ToolchainOperationResult, String> {
     if bytes.len() < 1024 * 1024 {
         return Err("下载的 rustup-init 文件不完整，请重试。".into());
     }
+    verify_download(&client, &url, &bytes)?;
 
-    let temp_dir = std::env::temp_dir().join("cargo-sweep");
-    fs::create_dir_all(&temp_dir).map_err(|error| format!("无法创建临时目录：{error}"))?;
-    let binary = temp_dir.join(executable_name);
+    let install_dir = dirs::data_local_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("CargoSweep")
+        .join("install");
+    fs::create_dir_all(&install_dir).map_err(|error| format!("无法创建安装缓存目录：{error}"))?;
+    let binary = install_dir.join(executable_name);
     fs::write(&binary, &bytes).map_err(|error| format!("无法写入 rustup-init：{error}"))?;
     #[cfg(unix)]
     {
@@ -520,6 +541,115 @@ pub fn install_rustup() -> Result<ToolchainOperationResult, String> {
         },
         status,
     })
+}
+
+fn verify_download(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+
+    let checksum_response = client
+        .get(format!("{url}.sha256"))
+        .send()
+        .map_err(|error| format!("无法获取 rustup-init 校验值：{error}"))?;
+    if !checksum_response.status().is_success() {
+        return Err(format!(
+            "无法获取 rustup-init 校验值：HTTP {}",
+            checksum_response.status()
+        ));
+    }
+    let checksum_text = checksum_response
+        .text()
+        .map_err(|error| format!("无法读取 rustup-init 校验值：{error}"))?;
+    let expected = checksum_text
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| "rustup-init 校验值为空。".to_string())?;
+    if expected.len() != 64
+        || !expected
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err("rustup-init 校验值格式不正确。".into());
+    }
+    let actual = format!("{:x}", Sha256::digest(bytes));
+    if !actual.eq_ignore_ascii_case(expected) {
+        return Err("rustup-init 校验失败，已停止安装。".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn install_rustup_with_winget() -> Option<Result<String, String>> {
+    let mut command = Command::new("winget");
+    command.args([
+        "install",
+        "--id",
+        "Rustlang.Rustup",
+        "-e",
+        "--silent",
+        "--accept-package-agreements",
+        "--accept-source-agreements",
+    ]);
+    apply_no_window(&mut command);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = match command.output() {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => return Some(Err(format!("无法启动 winget：{error}"))),
+    };
+    let text = clean_output(&format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    ));
+    if output.status.success() {
+        Some(Ok(if text.trim().is_empty() {
+            "已通过 winget 安装 rustup。".into()
+        } else {
+            text
+        }))
+    } else {
+        Some(Err(if text.trim().is_empty() {
+            "winget 安装 rustup 失败。".into()
+        } else {
+            text
+        }))
+    }
+}
+
+fn ensure_stable_toolchain(output: &mut String) -> Result<(), String> {
+    prepare_rust_environment();
+    let list = run("rustup", &["toolchain", "list"]).unwrap_or_default();
+    if !list
+        .lines()
+        .any(|line| line.trim_start().starts_with("stable-"))
+    {
+        let result = run_capture(
+            "rustup",
+            &["toolchain", "install", "stable", "--profile", "default"],
+        )?;
+        if !result.1.trim().is_empty() {
+            output.push('\n');
+            output.push_str(result.1.trim());
+        }
+        if !result.0 {
+            return Err("Stable 工具链安装失败。".into());
+        }
+    }
+    if run("rustup", &["default"])
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        let result = run_capture("rustup", &["default", "stable"])?;
+        if !result.0 {
+            return Err("设置 Stable 为默认工具链失败。".into());
+        }
+    }
+    Ok(())
 }
 
 fn prepare_rust_environment() -> Option<PathBuf> {
