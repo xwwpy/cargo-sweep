@@ -14,8 +14,14 @@ use std::io::Write;
 use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
+
+#[derive(Default)]
+struct OperationState {
+    active: AtomicBool,
+}
 
 fn startup_log(message: &str) {
     let base = dirs::data_local_dir().unwrap_or_else(std::env::temp_dir);
@@ -237,6 +243,11 @@ async fn uninstall_rust_toolchain(target: String) -> Result<ToolchainOperationRe
 }
 
 #[tauri::command]
+fn set_operation_active(state: tauri::State<OperationState>, active: bool) {
+    state.active.store(active, Ordering::SeqCst);
+}
+
+#[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
     let folder = std::path::PathBuf::from(&path);
     if !folder.is_dir() {
@@ -267,10 +278,23 @@ pub fn run() {
         "Cargo Sweep starting; runtime temp={runtime_temp:?}"
     ));
 
-    let result = tauri::Builder::default()
+    let app = match tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(OperationState::default())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window
+                    .state::<OperationState>()
+                    .active
+                    .load(Ordering::SeqCst)
+                {
+                    api.prevent_close();
+                    let _ = window.emit("operation-close-blocked", ());
+                }
+            }
+        })
         .setup(|_app| {
             startup_log("Tauri setup completed");
             Ok(())
@@ -295,13 +319,29 @@ pub fn run() {
             set_default_rust_toolchain,
             update_rust_toolchain,
             uninstall_rust_toolchain,
+            set_operation_active,
             open_folder
         ])
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!())
+    {
+        Ok(app) => app,
+        Err(error) => {
+            startup_log(&format!("Tauri run failed: {error}"));
+            eprintln!("Cargo Sweep failed to start: {error}");
+            std::process::exit(1);
+        }
+    };
 
-    if let Err(error) = result {
-        startup_log(&format!("Tauri run failed: {error}"));
-        eprintln!("Cargo Sweep failed to start: {error}");
-        std::process::exit(1);
-    }
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            if app_handle
+                .state::<OperationState>()
+                .active
+                .load(Ordering::SeqCst)
+            {
+                api.prevent_exit();
+                let _ = app_handle.emit("operation-close-blocked", ());
+            }
+        }
+    });
 }

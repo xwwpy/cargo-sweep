@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
+import { listen } from "@tauri-apps/api/event";
 import {
   Check,
   Download,
@@ -21,17 +22,20 @@ import UpdateBanner from "./components/UpdateBanner.vue";
 import UpdateDialog from "./components/UpdateDialog.vue";
 import { useTheme, type ThemeMode } from "./composables/useTheme";
 import { useUpdater } from "./composables/useUpdater";
+import { operationBusy } from "./composables/useOperationBusy";
 import {
   defaultScanRoots,
   deleteTargets,
   errorMessage,
   isDemoMode,
+  isTauriRuntime,
   listenToScanProgress,
   openFolder,
   openPrivacySettings,
   pickFolders,
   probeRustInstallation,
   scanTargets,
+  setOperationActive,
 } from "./api";
 import { basename, cleanPath, formatBytes, pathKey } from "./lib/format";
 import { APP_VERSION } from "./lib/version";
@@ -95,7 +99,16 @@ const {
 } = useUpdater();
 
 let unlistenProgress: (() => void) | undefined;
+let unlistenCloseBlocked: (() => void) | undefined;
 let updateTimer: number | undefined;
+
+watch(
+  operationBusy,
+  (value) => {
+    void setOperationActive(Boolean(value)).catch(() => {});
+  },
+  { flush: "sync" },
+);
 
 const demoMode = isDemoMode();
 
@@ -141,6 +154,16 @@ async function updateRustInstallationState(installed: boolean) {
 }
 
 onMounted(async () => {
+  if (isTauriRuntime()) {
+    try {
+      unlistenCloseBlocked = await listen("operation-close-blocked", () => {
+        ElMessage.warning("工具链操作进行中，请等待完成后再关闭应用");
+      });
+    } catch {
+      // The backend still prevents the close; only the warning is optional.
+    }
+  }
+
   void probeRustInstallation()
     .then((probe) => updateRustInstallationState(probe.installed))
     .catch(() => updateRustInstallationState(false));
@@ -162,6 +185,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unlistenProgress?.();
+  unlistenCloseBlocked?.();
+  void setOperationActive(false).catch(() => {});
   if (updateTimer !== undefined) {
     window.clearTimeout(updateTimer);
   }
@@ -379,6 +404,10 @@ async function allowReadAccess() {
 }
 
 function navigateTo(page: "targets" | "sources" | "toolchain") {
+  if (operationBusy.value && page !== activePage.value) {
+    ElMessage.warning("工具链操作进行中，请等待完成后再切换页面");
+    return;
+  }
   if (page === "sources" && !rustInstalled.value) {
     activePage.value = "toolchain";
     return;
@@ -422,6 +451,10 @@ function openUpdateDialog() {
 
 function installAvailableUpdate() {
   if (!hasUpdate.value) {
+    return;
+  }
+  if (operationBusy.value) {
+    ElMessage.warning("工具链操作进行中，请等待完成后再更新应用");
     return;
   }
   updateDialogVisible.value = true;

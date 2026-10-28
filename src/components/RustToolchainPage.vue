@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { operationBusy as busy } from "../composables/useOperationBusy";
 import {
   CircleCheck,
   Clock,
@@ -62,7 +63,6 @@ const latestError = ref<string | null>(null);
 const loading = ref(true);
 const latestLoading = ref(true);
 const error = ref<string | null>(null);
-const busy = ref<string | null>(null);
 const actionOutput = ref<string | null>(null);
 const actionSuccess = ref<boolean | null>(null);
 const elapsed = ref(0);
@@ -112,7 +112,55 @@ const currentIsLatest = computed(() => {
 });
 const historyOptions = computed(() => latest.value?.historicalVersions ?? []);
 const installedToolchains = computed(() => status.value?.toolchains ?? []);
-const busyLabel = computed(() => busy.value ?? "");
+const busyLabel = computed(() => {
+  const value = busy.value;
+  if (!value) {
+    return "";
+  }
+  if (value === "rustup") {
+    return "正在下载并安装 rustup";
+  }
+  if (value === "rustup-path") {
+    return "正在保存 rustup 路径";
+  }
+  if (value.startsWith("install-")) {
+    return `正在下载并安装 ${toolchainLabel(value.slice("install-".length))}`;
+  }
+  if (value.startsWith("update-")) {
+    return `正在更新 ${toolchainLabel(value.slice("update-".length))}`;
+  }
+  if (value.startsWith("switch-")) {
+    return `正在切换 ${toolchainLabel(value.slice("switch-".length))}`;
+  }
+  if (value.startsWith("uninstall-")) {
+    return "正在删除工具链";
+  }
+  if (value === "migrate-cargo-home") {
+    return "正在迁移 CARGO_HOME";
+  }
+  if (value === "migrate-rustup-home") {
+    return "正在迁移 RUSTUP_HOME";
+  }
+  if (value === "configure-cargo") {
+    return "正在更新 CARGO_HOME 配置";
+  }
+  if (value === "configure-rustup") {
+    return "正在更新 RUSTUP_HOME 配置";
+  }
+  return "正在处理，请稍候";
+});
+const progressHint = computed(() =>
+  busy.value ? "操作进行中，请保持应用开启；完成前应用不会关闭。" : "",
+);
+function toolchainLabel(value: string): string {
+  if (value === "stable") {
+    return "Stable";
+  }
+  if (value === "nightly") {
+    return "Nightly";
+  }
+  return value;
+}
 const environmentRows = computed<
   {
     name: string;
@@ -644,6 +692,25 @@ onUnmounted(stopTimer);
     </div>
 
     <template v-else-if="status">
+      <div v-if="busy" class="operation-progress">
+        <div class="operation-progress-head">
+          <span>
+            <el-icon class="spinning"><Clock /></el-icon>
+            {{ busyLabel }}
+          </span>
+          <span>{{ elapsedLabel }}</span>
+        </div>
+        <el-progress
+          :percentage="100"
+          :show-text="false"
+          :indeterminate="true"
+          :duration="1.8"
+          :stroke-width="5"
+          color="#0f766e"
+        />
+        <p>{{ progressHint }}</p>
+      </div>
+
       <div v-if="!status.installed" class="setup-banner">
         <div class="setup-icon"><el-icon><InfoFilled /></el-icon></div>
         <div class="setup-copy">
@@ -989,27 +1056,17 @@ onUnmounted(stopTimer);
         </div>
       </section>
 
-      <section v-if="busy || actionOutput" class="action-console">
+      <section v-if="actionOutput" class="action-console">
         <div class="console-head">
           <span>
-            <el-icon v-if="busy" class="spinning"><Clock /></el-icon>
-            <el-icon v-else-if="actionSuccess === true" class="success-icon">
+            <el-icon v-if="actionSuccess === true" class="success-icon">
               <CircleCheck />
             </el-icon>
             <el-icon v-else class="failed-icon"><WarningFilled /></el-icon>
-            {{ busy ? `${busyLabel} · ${elapsedLabel}` : "上次操作日志" }}
+            上次操作日志
           </span>
-          <span v-if="busy" class="console-hint">请稍候，下载可能需要几分钟</span>
         </div>
-        <el-progress
-          v-if="busy"
-          :percentage="100"
-          :show-text="false"
-          :indeterminate="true"
-          :duration="1.8"
-          :stroke-width="3"
-        />
-        <pre v-if="actionOutput" class="console-output">{{ actionOutput }}</pre>
+        <pre class="console-output">{{ actionOutput }}</pre>
       </section>
     </template>
 
@@ -1279,6 +1336,52 @@ onUnmounted(stopTimer);
 .toolchain-loading p {
   margin: 6px 0 0;
   font-size: 10.5px;
+  color: #98a2b3;
+}
+
+.operation-progress {
+  position: fixed;
+  right: 26px;
+  bottom: 22px;
+  z-index: 30;
+  width: min(430px, calc(100vw - 52px));
+  padding: 11px 14px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #d1f5ec;
+  border-left: 3px solid #0f766e;
+  border-radius: 10px;
+  box-shadow: 0 18px 45px rgba(16, 24, 40, 0.16);
+  backdrop-filter: blur(10px);
+}
+
+.operation-progress-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  font-family: "Manrope Variable", "Segoe UI", sans-serif;
+  font-size: 10px;
+  color: #0f766e;
+}
+
+.operation-progress-head > span {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.operation-progress-head > span:last-child {
+  font-variant-numeric: tabular-nums;
+  color: #98a2b3;
+}
+
+.operation-progress :deep(.el-progress) {
+  margin: 8px 0 5px;
+}
+
+.operation-progress p {
+  margin: 0;
+  font-size: 8.5px;
   color: #98a2b3;
 }
 

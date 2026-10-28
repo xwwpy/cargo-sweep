@@ -298,6 +298,13 @@ export async function updateRustToolchain(
   });
 }
 
+export async function setOperationActive(active: boolean): Promise<void> {
+  if (isDemoMode() || !isTauriRuntime()) {
+    return;
+  }
+  await invoke("set_operation_active", { active });
+}
+
 export async function openFolder(path: string): Promise<void> {
   if (isDemoMode()) {
     throw new Error("演示模式无法打开本地目录");
