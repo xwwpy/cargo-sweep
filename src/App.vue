@@ -19,7 +19,12 @@ import DeleteDialog from "./components/DeleteDialog.vue";
 import RustEnvironmentPage from "./components/RustEnvironmentPage.vue";
 import UpdateBanner from "./components/UpdateBanner.vue";
 import UpdateDialog from "./components/UpdateDialog.vue";
-import { useTheme, type ThemeMode } from "./composables/useTheme";
+import {
+  colorPalettes,
+  useTheme,
+  type ColorPalette,
+  type ThemeMode,
+} from "./composables/useTheme";
 import { useUpdater } from "./composables/useUpdater";
 import { operationBusy } from "./composables/useOperationBusy";
 import {
@@ -42,12 +47,26 @@ import type { ScanProgress, TargetInfo } from "./types";
 
 const STORAGE_KEY = "cargo-sweep.scan-roots.v1";
 
-const { mode: themeMode, isDark, setMode: setThemeMode } = useTheme();
+const {
+  mode: themeMode,
+  palette: themePalette,
+  isDark,
+  setMode: setThemeMode,
+  setPalette: setThemePalette,
+} = useTheme();
+const paletteLabel = computed(
+  () =>
+    colorPalettes.find((palette) => palette.id === themePalette.value)?.name ??
+    "玫瑰星云",
+);
 const themeLabel = computed(() => {
-  if (themeMode.value === "system") {
-    return "跟随系统";
-  }
-  return themeMode.value === "dark" ? "深色" : "浅色";
+  const modeLabel =
+    themeMode.value === "system"
+      ? "跟随系统"
+      : themeMode.value === "dark"
+        ? "深色"
+        : "浅色";
+  return `${modeLabel} · ${paletteLabel.value}`;
 });
 
 const activePage = ref<"targets" | "rust">("targets");
@@ -389,6 +408,10 @@ function changeTheme(command: string) {
   setThemeMode(command as ThemeMode);
 }
 
+function choosePalette(nextPalette: ColorPalette) {
+  setThemePalette(nextPalette);
+}
+
 async function allowReadAccess() {
   try {
     await openPrivacySettings();
@@ -514,58 +537,93 @@ function uniqueRoots(list: string[]): string[] {
             {{ syncLabel }}
           </span>
 
-          <el-dropdown
+          <el-popover
             class="theme-dropdown"
             trigger="click"
             placement="bottom-end"
-            @command="changeTheme"
+            :width="318"
+            popper-class="theme-popper"
           >
-            <button
-              class="theme-toggle"
-              type="button"
-              :title="`主题：${themeLabel}`"
-              :aria-label="`切换主题，当前${themeLabel}`"
-            >
-              <el-icon>
-                <Moon v-if="isDark" />
-                <Sunny v-else />
-              </el-icon>
-            </button>
-            <template #dropdown>
-              <el-dropdown-menu class="theme-menu">
-                <el-dropdown-item
-                  command="light"
-                  :class="{ 'is-active': themeMode === 'light' }"
+            <template #reference>
+              <button
+                class="theme-toggle"
+                type="button"
+                :title="`主题与配色：${themeLabel}`"
+                :aria-label="`切换主题与配色，当前${themeLabel}`"
+              >
+                <el-icon>
+                  <Moon v-if="isDark" />
+                  <Sunny v-else />
+                </el-icon>
+              </button>
+            </template>
+
+            <div class="theme-studio">
+              <div class="theme-studio-head">
+                <div>
+                  <span class="theme-studio-kicker">APPEARANCE</span>
+                  <strong>界面风格</strong>
+                </div>
+                <span class="theme-current">{{ themeLabel }}</span>
+              </div>
+
+              <div class="appearance-modes">
+                <button
+                  type="button"
+                  :class="{ active: themeMode === 'light' }"
+                  @click="changeTheme('light')"
                 >
                   <el-icon><Sunny /></el-icon>
-                  <span>浅色</span>
-                  <el-icon v-if="themeMode === 'light'" class="theme-check">
-                    <Check />
-                  </el-icon>
-                </el-dropdown-item>
-                <el-dropdown-item
-                  command="dark"
-                  :class="{ 'is-active': themeMode === 'dark' }"
+                  浅色
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: themeMode === 'dark' }"
+                  @click="changeTheme('dark')"
                 >
                   <el-icon><Moon /></el-icon>
-                  <span>深色</span>
-                  <el-icon v-if="themeMode === 'dark'" class="theme-check">
-                    <Check />
-                  </el-icon>
-                </el-dropdown-item>
-                <el-dropdown-item
-                  command="system"
-                  :class="{ 'is-active': themeMode === 'system' }"
+                  深色
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: themeMode === 'system' }"
+                  @click="changeTheme('system')"
                 >
                   <el-icon><Monitor /></el-icon>
-                  <span>跟随系统</span>
-                  <el-icon v-if="themeMode === 'system'" class="theme-check">
+                  系统
+                </button>
+              </div>
+
+              <div class="palette-heading">
+                <span>配色方案</span>
+                <small>{{ colorPalettes.length }} 种</small>
+              </div>
+              <div class="palette-grid">
+                <button
+                  v-for="palette in colorPalettes"
+                  :key="palette.id"
+                  type="button"
+                  class="palette-card"
+                  :class="{ active: themePalette === palette.id }"
+                  @click="choosePalette(palette.id)"
+                >
+                  <span
+                    class="palette-swatch"
+                    :style="{
+                      background: `linear-gradient(135deg, ${palette.colors[0]}, ${palette.colors[1]} 58%, ${palette.colors[2]})`,
+                    }"
+                  />
+                  <span class="palette-copy">
+                    <strong>{{ palette.name }}</strong>
+                    <small>{{ palette.description }}</small>
+                  </span>
+                  <el-icon v-if="themePalette === palette.id" class="palette-check">
                     <Check />
                   </el-icon>
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+                </button>
+              </div>
+            </div>
+          </el-popover>
 
           <el-tooltip
             :content="hasUpdate ? `发现新版本 v${availableUpdate?.version}` : '检查更新'"
