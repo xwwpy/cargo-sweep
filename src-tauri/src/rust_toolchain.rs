@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 use toml::Value;
 
@@ -71,6 +74,13 @@ pub struct ToolchainOperationResult {
     pub success: bool,
     pub output: String,
     pub status: RustToolchainStatus,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationProgress {
+    pub percent: u8,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -266,28 +276,40 @@ pub fn latest() -> Result<LatestRustVersions, String> {
     })
 }
 
-pub fn install(target: String, set_default: bool) -> Result<ToolchainOperationResult, String> {
+pub fn install_with_progress<F>(
+    target: String,
+    set_default: bool,
+    mut on_progress: F,
+) -> Result<ToolchainOperationResult, String>
+where
+    F: FnMut(OperationProgress),
+{
     let target = validate_target(&target)?;
     let before = detect()?;
     if !before.rustup_installed {
         return Err("未检测到 rustup，请先安装 Rustup 后再下载工具链。".into());
     }
 
-    let mut command = Command::new("rustup");
-    command.args(["toolchain", "install", &target, "--profile", "default"]);
-    apply_no_window(&mut command);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output = command
-        .output()
-        .map_err(|error| format!("无法启动 rustup：{error}"))?;
-    let success = output.status.success();
-    let mut text = clean_output(&format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    ));
+    on_progress(OperationProgress {
+        percent: 2,
+        message: format!("准备下载 {target}"),
+    });
+    let mut progress = RustupProgress::default();
+    let (success, mut text) = run_streaming(
+        "rustup",
+        &["toolchain", "install", &target, "--profile", "default"],
+        |line| {
+            if let Some(next) = progress.observe(line) {
+                on_progress(next);
+            }
+        },
+    )?;
 
     if success && (set_default || before.default_toolchain.is_none()) {
+        on_progress(OperationProgress {
+            percent: 97,
+            message: "设置默认工具链".into(),
+        });
         let default_output = run("rustup", &["default", &target]);
         match default_output {
             Ok(default_text) => {
@@ -302,6 +324,12 @@ pub fn install(target: String, set_default: bool) -> Result<ToolchainOperationRe
         }
     }
 
+    if success {
+        on_progress(OperationProgress {
+            percent: 100,
+            message: "工具链安装完成".into(),
+        });
+    }
     let status = detect().unwrap_or(before);
     Ok(ToolchainOperationResult {
         success,
@@ -333,34 +361,45 @@ pub fn set_default(target: String) -> Result<ToolchainOperationResult, String> {
     })
 }
 
-pub fn update(target: Option<String>) -> Result<ToolchainOperationResult, String> {
+pub fn update_with_progress<F>(
+    target: Option<String>,
+    mut on_progress: F,
+) -> Result<ToolchainOperationResult, String>
+where
+    F: FnMut(OperationProgress),
+{
     let target = target.map(|value| validate_target(&value)).transpose()?;
     let before = detect()?;
     let toolchain = target
         .or_else(|| before.active_toolchain.clone())
         .or_else(|| before.default_toolchain.clone());
 
-    let mut command = Command::new("rustup");
-    command.arg("update").arg("--no-self-update");
+    on_progress(OperationProgress {
+        percent: 2,
+        message: "检查工具链更新".into(),
+    });
+    let mut args = vec!["update", "--no-self-update"];
     if let Some(toolchain) = toolchain.as_deref() {
-        command.arg(toolchain);
+        args.push(toolchain);
     }
-    apply_no_window(&mut command);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output = command
-        .output()
-        .map_err(|error| format!("无法启动 rustup update：{error}"))?;
-    let success = output.status.success();
-    let text = clean_output(&format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    ));
+    let mut progress = RustupProgress::default();
+    let (success, text) = run_streaming("rustup", &args, |line| {
+        if let Some(next) = progress.observe(line) {
+            on_progress(next);
+        }
+    })?;
     if !success && text.trim().is_empty() {
-        return Err(format!(
-            "rustup update 失败，退出码 {:?}",
-            output.status.code()
-        ));
+        return Err("rustup update 失败，未返回输出。".into());
+    }
+    if success {
+        on_progress(OperationProgress {
+            percent: 100,
+            message: if text.trim().is_empty() {
+                "没有新的更新".into()
+            } else {
+                "工具链更新完成".into()
+            },
+        });
     }
     let status = detect().unwrap_or(before);
     Ok(ToolchainOperationResult {
@@ -442,7 +481,12 @@ pub fn set_rustup_path(path: String) -> Result<RustToolchainStatus, String> {
     detect()
 }
 
-pub fn install_rustup() -> Result<ToolchainOperationResult, String> {
+pub fn install_rustup_with_progress<F>(
+    mut on_progress: F,
+) -> Result<ToolchainOperationResult, String>
+where
+    F: FnMut(OperationProgress),
+{
     crate::rustup_source::apply_saved_source();
     prepare_rust_environment();
     if run("rustup", &["--version"]).is_ok() {
@@ -455,7 +499,15 @@ pub fn install_rustup() -> Result<ToolchainOperationResult, String> {
             winget_result.map_err(|error| format!("winget 安装 rustup 失败：{error}"))?;
         prepare_rust_environment();
         if run("rustup", &["--version"]).is_ok() {
+            on_progress(OperationProgress {
+                percent: 72,
+                message: "安装 Stable 工具链".into(),
+            });
             ensure_stable_toolchain(&mut text)?;
+            on_progress(OperationProgress {
+                percent: 100,
+                message: "rustup 安装完成".into(),
+            });
             let status = detect()?;
             return Ok(ToolchainOperationResult {
                 success: true,
@@ -466,6 +518,10 @@ pub fn install_rustup() -> Result<ToolchainOperationResult, String> {
         return Err("winget 已结束，但未检测到 rustup，请检查 winget 输出。".into());
     }
 
+    on_progress(OperationProgress {
+        percent: 3,
+        message: "准备下载 rustup-init".into(),
+    });
     let target = rustup_target()?;
     let executable_name = if cfg!(windows) {
         "rustup-init.exe"
@@ -478,19 +534,43 @@ pub fn install_rustup() -> Result<ToolchainOperationResult, String> {
         .user_agent(format!("cargo-sweep/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|error| format!("无法创建网络请求：{error}"))?;
-    let response = client
+    let mut response = client
         .get(&url)
         .send()
         .map_err(|error| format!("无法下载 rustup-init：{error}"))?;
     if !response.status().is_success() {
         return Err(format!("无法下载 rustup-init：HTTP {}", response.status()));
     }
-    let bytes = response
-        .bytes()
-        .map_err(|error| format!("无法读取 rustup-init 下载内容：{error}"))?;
+    let total = response.content_length();
+    let mut bytes = Vec::with_capacity(total.unwrap_or(0) as usize);
+    let mut buffer = [0u8; 64 * 1024];
+    let mut last_percent = 3u8;
+    loop {
+        let read = response
+            .read(&mut buffer)
+            .map_err(|error| format!("无法读取 rustup-init 下载内容：{error}"))?;
+        if read == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+        if let Some(total) = total.filter(|total| *total > 0) {
+            let percent = (5 + bytes.len() as u64 * 70 / total).min(75) as u8;
+            if percent >= last_percent + 2 {
+                last_percent = percent;
+                on_progress(OperationProgress {
+                    percent,
+                    message: format!("下载 rustup-init · {}%", percent),
+                });
+            }
+        }
+    }
     if bytes.len() < 1024 * 1024 {
         return Err("下载的 rustup-init 文件不完整，请重试。".into());
     }
+    on_progress(OperationProgress {
+        percent: 78,
+        message: "校验 rustup-init".into(),
+    });
     verify_download(&client, &url, &bytes)?;
 
     let install_dir = dirs::data_local_dir()
@@ -506,6 +586,10 @@ pub fn install_rustup() -> Result<ToolchainOperationResult, String> {
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))
             .map_err(|error| format!("无法设置 rustup-init 执行权限：{error}"))?;
     }
+    on_progress(OperationProgress {
+        percent: 85,
+        message: "安装 Stable 工具链".into(),
+    });
 
     let before = detect()?;
     let mut command = Command::new(&binary);
@@ -528,6 +612,12 @@ pub fn install_rustup() -> Result<ToolchainOperationResult, String> {
         String::from_utf8_lossy(&output.stderr)
     ));
     let _ = fs::remove_file(&binary);
+    if success {
+        on_progress(OperationProgress {
+            percent: 100,
+            message: "rustup 安装完成".into(),
+        });
+    }
 
     prepare_rust_environment();
     let status = detect().unwrap_or(before);
@@ -909,6 +999,123 @@ fn validate_target(target: &str) -> Result<String, String> {
     Ok(target.to_string())
 }
 
+#[derive(Default)]
+struct RustupProgress {
+    percent: u8,
+    downloads: u8,
+    installs: u8,
+}
+
+impl RustupProgress {
+    fn observe(&mut self, line: &str) -> Option<OperationProgress> {
+        let clean = strip_ansi(line);
+        let lower = clean.to_ascii_lowercase();
+        let (percent, message) = if lower.contains("syncing channel updates") {
+            (8, "同步版本信息".to_string())
+        } else if lower.contains("downloading component") {
+            self.downloads = self.downloads.saturating_add(1);
+            let percent = 12 + self.downloads.min(6) * 6;
+            (percent, format!("正在下载 {}", component_name(&clean)))
+        } else if lower.contains("installing component") {
+            self.installs = self.installs.saturating_add(1);
+            let percent = 52 + self.installs.min(6) * 7;
+            (percent, format!("正在安装 {}", component_name(&clean)))
+        } else if lower.contains("default toolchain set") {
+            (96, "设置默认工具链".to_string())
+        } else if lower.contains("checking for self-update") {
+            (4, "检查 rustup 更新".to_string())
+        } else {
+            let percent = line_percentage(&clean)?;
+            (percent, clean.trim().to_string())
+        };
+        let percent = percent.clamp(1, 99);
+        if percent < self.percent {
+            return None;
+        }
+        self.percent = percent;
+        Some(OperationProgress { percent, message })
+    }
+}
+
+fn component_name(line: &str) -> String {
+    line.split("component")
+        .nth(1)
+        .unwrap_or_default()
+        .trim()
+        .trim_start_matches('\'')
+        .split(|character: char| character == '\'' || character == '(' || character.is_whitespace())
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or("组件")
+        .to_string()
+}
+
+fn line_percentage(line: &str) -> Option<u8> {
+    line.split_whitespace()
+        .find_map(|token| token.strip_suffix('%')?.parse::<u8>().ok())
+}
+
+fn run_streaming<F>(program: &str, args: &[&str], mut on_line: F) -> Result<(bool, String), String>
+where
+    F: FnMut(&str),
+{
+    let mut command = Command::new(program);
+    command.args(args);
+    apply_no_window(&mut command);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            format!("未找到 {program}，请确认 Rust 已安装并加入 PATH。")
+        } else {
+            format!("无法运行 {program}：{error}")
+        }
+    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("无法读取 {program} 输出。"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("无法读取 {program} 错误输出。"))?;
+    let (sender, receiver) = mpsc::channel::<String>();
+    let stdout_sender = sender.clone();
+    let stdout_reader = thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if stdout_sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let stderr_sender = sender.clone();
+    let stderr_reader = thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if stderr_sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    drop(sender);
+
+    let mut text = String::new();
+    for line in receiver {
+        on_line(&line);
+        text.push_str(&line);
+        text.push('\n');
+    }
+    let _ = stdout_reader.join();
+    let _ = stderr_reader.join();
+    let status = child
+        .wait()
+        .map_err(|error| format!("等待 {program} 退出失败：{error}"))?;
+    let success = status.success();
+    let text = clean_output(&text);
+    if !success && text.trim().is_empty() {
+        return Err(format!("{program} 执行失败，退出码 {:?}", status.code()));
+    }
+    Ok((success, text))
+}
+
 fn run(program: &str, args: &[&str]) -> Result<String, String> {
     let (_, output) = run_capture(program, args)?;
     Ok(output.trim().to_string())
@@ -1117,6 +1324,53 @@ LLVM version: 23.1.1";
         assert_eq!(channel, "nightly");
         let pinned = channel_from_toolchain("1.94.1-x86_64-pc-windows-msvc");
         assert_eq!(pinned, "pinned");
+    }
+
+    #[test]
+    fn parses_download_progress_from_rustup_output() {
+        let mut progress = RustupProgress::default();
+        assert_eq!(
+            progress
+                .observe("info: syncing channel updates for 'stable-x86_64-pc-windows-msvc'")
+                .unwrap()
+                .percent,
+            8
+        );
+        let download = progress
+            .observe("info: downloading component 'rustc'")
+            .unwrap();
+        assert!(download.message.contains("rustc"));
+        assert!(download.percent > 8);
+        let install = progress
+            .observe("info: installing component 'rustc'")
+            .unwrap();
+        assert!(install.percent > download.percent);
+        assert_eq!(
+            progress
+                .observe("info: default toolchain set to 'stable'")
+                .unwrap()
+                .percent,
+            96
+        );
+        assert!(progress.observe("unrelated output").is_none());
+    }
+
+    #[test]
+    fn streams_command_output_without_deadlock() {
+        let mut lines = 0usize;
+        let (success, text) = run_streaming("rustc", &["--version"], |_| {
+            lines += 1;
+        })
+        .unwrap();
+        assert!(success);
+        assert!(text.contains("rustc"));
+        assert!(lines > 0);
+    }
+
+    #[test]
+    fn parses_percentage_lines_from_command_output() {
+        assert_eq!(line_percentage("downloading 42%"), Some(42));
+        assert_eq!(line_percentage("no percentage here"), None);
     }
 
     #[test]

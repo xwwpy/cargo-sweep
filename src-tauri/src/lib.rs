@@ -209,10 +209,14 @@ async fn set_rustup_path(path: String) -> Result<RustToolchainStatus, String> {
 }
 
 #[tauri::command]
-async fn install_rustup() -> Result<ToolchainOperationResult, String> {
-    tauri::async_runtime::spawn_blocking(rust_toolchain::install_rustup)
-        .await
-        .map_err(|error| format!("安装 rustup 任务异常退出：{error}"))?
+async fn install_rustup(app: tauri::AppHandle) -> Result<ToolchainOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        rust_toolchain::install_rustup_with_progress(|progress| {
+            let _ = app.emit("toolchain-progress", progress);
+        })
+    })
+    .await
+    .map_err(|error| format!("安装 rustup 任务异常退出：{error}"))?
 }
 
 #[tauri::command]
@@ -233,12 +237,17 @@ fn open_privacy_settings() -> Result<(), String> {
 
 #[tauri::command]
 async fn install_rust_toolchain(
+    app: tauri::AppHandle,
     target: String,
     set_default: bool,
 ) -> Result<ToolchainOperationResult, String> {
-    tauri::async_runtime::spawn_blocking(move || rust_toolchain::install(target, set_default))
-        .await
-        .map_err(|error| format!("安装 Rust 工具链任务异常退出：{error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        rust_toolchain::install_with_progress(target, set_default, |progress| {
+            let _ = app.emit("toolchain-progress", progress);
+        })
+    })
+    .await
+    .map_err(|error| format!("安装 Rust 工具链任务异常退出：{error}"))?
 }
 
 #[tauri::command]
@@ -249,10 +258,17 @@ async fn set_default_rust_toolchain(target: String) -> Result<ToolchainOperation
 }
 
 #[tauri::command]
-async fn update_rust_toolchain(target: Option<String>) -> Result<ToolchainOperationResult, String> {
-    tauri::async_runtime::spawn_blocking(move || rust_toolchain::update(target))
-        .await
-        .map_err(|error| format!("更新 Rust 工具链任务异常退出：{error}"))?
+async fn update_rust_toolchain(
+    app: tauri::AppHandle,
+    target: Option<String>,
+) -> Result<ToolchainOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        rust_toolchain::update_with_progress(target, |progress| {
+            let _ = app.emit("toolchain-progress", progress);
+        })
+    })
+    .await
+    .map_err(|error| format!("更新 Rust 工具链任务异常退出：{error}"))?
 }
 
 #[tauri::command]

@@ -159,6 +159,11 @@ export interface RustupMirror {
   updateRoot: string;
 }
 
+export interface ToolchainProgress {
+  percent: number;
+  message: string;
+}
+
 export interface RustupSourceStatus {
   currentId: string;
   currentName: string;

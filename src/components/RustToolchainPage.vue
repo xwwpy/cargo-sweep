@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { listen } from "@tauri-apps/api/event";
 import { operationBusy as busy } from "../composables/useOperationBusy";
 import {
   CircleCheck,
@@ -41,6 +42,7 @@ import type {
   RustChannel,
   RustToolchainStatus,
   RustupSourceStatus,
+  ToolchainProgress,
 } from "../types";
 
 interface ChannelView {
@@ -92,8 +94,11 @@ const rustupHomeTarget = ref("");
 const createRustupLink = ref(true);
 const rustupMigrating = ref(false);
 const rustupMigrationError = ref<string | null>(null);
+const operationPercent = ref<number | null>(null);
+const operationMessage = ref("");
 const isWindows = /Windows/i.test(navigator.userAgent);
 let timer: number | undefined;
+let unlistenProgress: (() => void) | undefined;
 
 interface CommandEntry {
   label: string;
@@ -583,6 +588,8 @@ function canUseAction(view: ChannelView): boolean {
 }
 
 function startTimer() {
+  operationPercent.value = null;
+  operationMessage.value = "";
   elapsed.value = 0;
   window.clearInterval(timer);
   timer = window.setInterval(() => {
@@ -1021,9 +1028,28 @@ function retryLatest() {
 
 onMounted(() => {
   void load();
+  void listen<ToolchainProgress>("toolchain-progress", (event) => {
+    if (!busy.value) {
+      return;
+    }
+    operationPercent.value = Math.max(
+      0,
+      Math.min(100, event.payload.percent),
+    );
+    operationMessage.value = event.payload.message;
+  })
+    .then((unlisten) => {
+      unlistenProgress = unlisten;
+    })
+    .catch(() => {
+      // Demo mode has no Tauri event bridge.
+    });
 });
 
-onUnmounted(stopTimer);
+onUnmounted(() => {
+  stopTimer();
+  unlistenProgress?.();
+});
 </script>
 
 <template>
@@ -1062,17 +1088,23 @@ onUnmounted(stopTimer);
             <el-icon class="spinning"><Clock /></el-icon>
             {{ busyLabel }}
           </span>
-          <span>{{ elapsedLabel }}</span>
+          <span>
+            {{
+              operationPercent === null
+                ? elapsedLabel
+                : `${operationPercent}% · ${elapsedLabel}`
+            }}
+          </span>
         </div>
         <el-progress
-          :percentage="100"
+          :percentage="operationPercent ?? 0"
           :show-text="false"
-          :indeterminate="true"
+          :indeterminate="operationPercent === null"
           :duration="1.8"
           :stroke-width="5"
           color="#0f766e"
         />
-        <p>{{ progressHint }}</p>
+        <p>{{ operationMessage || progressHint }}</p>
       </div>
 
       <div v-if="!status.installed" class="setup-banner">
