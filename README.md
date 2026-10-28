@@ -10,17 +10,17 @@ Cargo Sweep 是一个 Rust 项目构建缓存清理工具：扫描并删除 `tar
 | macOS 11+ | Intel / Apple Silicon | Universal DMG |
 | Linux | x86_64 | DEB、AppImage |
 
-安装包统一从 [GitHub Releases](https://github.com/xwwpy/cargo-sweep/releases/latest) 下载。以下命令以 **0.5.6** 为例，后续版本替换版本号即可。
+安装包统一从 [GitHub Releases](https://github.com/xwwpy/cargo-sweep/releases/latest) 下载。以下命令以 **0.5.7** 为例，后续版本替换版本号即可。
 
 ## 安装
 
 ### Windows
 
-下载 `Cargo-Sweep-0.5.6-installer-x64.zip`，解压后运行 `INSTALL-CARGO-SWEEP.cmd`。也可以使用 `Cargo-Sweep-0.5.6-portable-x64.zip` 免安装运行。
+下载 `Cargo-Sweep-0.5.7-installer-x64.zip`，解压后运行 `INSTALL-CARGO-SWEEP.cmd`。也可以使用 `Cargo-Sweep-0.5.7-portable-x64.zip` 免安装运行。
 
 ### macOS
 
-下载 `Cargo-Sweep-0.5.6-universal.dmg`，打开后将 Cargo Sweep 拖入「应用程序」。
+下载 `Cargo-Sweep-0.5.7-universal.dmg`，打开后将 Cargo Sweep 拖入「应用程序」。
 
 应用未签名，首次启动请右键 Cargo Sweep 选择「打开」。如仍被拦截，可执行：
 
@@ -35,21 +35,21 @@ xattr -dr com.apple.quarantine "/Applications/Cargo Sweep.app"
 Debian / Ubuntu：
 
 ```bash
-sudo apt install ./Cargo-Sweep-0.5.6-amd64.deb
+sudo apt install ./Cargo-Sweep-0.5.7-amd64.deb
 ```
 
 如果 `apt` 无法直接安装本地包：
 
 ```bash
-sudo dpkg -i ./Cargo-Sweep-0.5.6-amd64.deb
+sudo dpkg -i ./Cargo-Sweep-0.5.7-amd64.deb
 sudo apt-get install -f
 ```
 
 其他发行版可使用 AppImage：
 
 ```bash
-chmod +x Cargo-Sweep-0.5.6-amd64.AppImage
-./Cargo-Sweep-0.5.6-amd64.AppImage
+chmod +x Cargo-Sweep-0.5.7-amd64.AppImage
+./Cargo-Sweep-0.5.7-amd64.AppImage
 ```
 
 > Linux 建议使用 Ubuntu 24.04 或更新版本；DEB 依赖 WebKitGTK 4.1。

@@ -416,13 +416,31 @@ where
         args.push(toolchain);
     }
     let mut progress = RustupProgress::default();
-    let (success, text) = run_streaming("rustup", &args, |line| {
+    let (mut success, mut text) = run_streaming("rustup", &args, |line| {
         if let Some(next) = progress.observe(line) {
             on_progress(next);
         }
     })?;
     if !success && text.trim().is_empty() {
         return Err("rustup update 失败，未返回输出。".into());
+    }
+    if !success && needs_toolchain_repair(&text) {
+        if let Some(toolchain_name) = toolchain.clone() {
+            on_progress(OperationProgress {
+                percent: 4,
+                message: "检测到工具链文件冲突，正在自动修复".into(),
+            });
+            let was_default = before.default_toolchain.as_deref() == Some(toolchain_name.as_str());
+            match repair_toolchain(&toolchain_name, was_default, &mut on_progress) {
+                Ok((repair_success, repair_text)) => {
+                    success = repair_success;
+                    text = format!("{text}\n\n{repair_text}");
+                }
+                Err(error) => {
+                    text = format!("{text}\n\n[自动修复失败]\n{error}");
+                }
+            }
+        }
     }
     if success {
         on_progress(OperationProgress {
@@ -444,6 +462,182 @@ where
         },
         status,
     })
+}
+
+fn needs_toolchain_repair(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    [
+        "os error 145",
+        "directory not empty",
+        "目录不是空的",
+        "detected conflict",
+        "could not rename component",
+        "failed to install component",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle) || output.contains(needle))
+}
+
+fn repair_toolchain<F>(
+    toolchain: &str,
+    was_default: bool,
+    on_progress: &mut F,
+) -> Result<(bool, String), String>
+where
+    F: FnMut(OperationProgress),
+{
+    let toolchains_dir =
+        rustup_toolchains_dir().ok_or_else(|| "无法定位 RUSTUP_HOME/toolchains。".to_string())?;
+    let toolchain_dir = toolchains_dir.join(toolchain);
+    let components = installed_packages("component", toolchain);
+    let targets = installed_packages("target", toolchain);
+    let mut output = String::from("[自动修复] 检测到工具链文件冲突，正在重新安装。");
+
+    on_progress(OperationProgress {
+        percent: 6,
+        message: "清理损坏的工具链".into(),
+    });
+    if let Ok((_, text)) = run_capture("rustup", &["toolchain", "uninstall", toolchain]) {
+        append_output(&mut output, &text);
+    }
+
+    let backup = if toolchain_dir.exists() {
+        let backup = repair_backup_path(&toolchain_dir);
+        fs::rename(&toolchain_dir, &backup).map_err(|error| {
+            format!(
+                "无法移动损坏的工具链目录 {}：{error}",
+                toolchain_dir.display()
+            )
+        })?;
+        append_output(
+            &mut output,
+            &format!("已将损坏目录移动到 {}", backup.display()),
+        );
+        Some(backup)
+    } else {
+        None
+    };
+
+    let mut progress = RustupProgress::default();
+    let install_result = run_streaming(
+        "rustup",
+        &["toolchain", "install", toolchain, "--profile", "default"],
+        |line| {
+            if let Some(next) = progress.observe(line) {
+                on_progress(next);
+            }
+        },
+    );
+    let (mut installed, install_text) = match install_result {
+        Ok(result) => result,
+        Err(error) => {
+            restore_repair_backup(&toolchain_dir, backup.as_deref());
+            append_output(&mut output, &format!("重新安装失败：{error}"));
+            return Ok((false, output));
+        }
+    };
+    append_output(&mut output, &install_text);
+
+    if !installed {
+        restore_repair_backup(&toolchain_dir, backup.as_deref());
+        append_output(&mut output, "\n工具链重新安装失败，已保留原目录备份。");
+        return Ok((false, output));
+    }
+
+    on_progress(OperationProgress {
+        percent: 94,
+        message: "恢复额外组件和目标".into(),
+    });
+    for component in components {
+        if let Ok((_, text)) = run_capture(
+            "rustup",
+            &["component", "add", "--toolchain", toolchain, &component],
+        ) {
+            append_output(&mut output, &text);
+        }
+    }
+    for target in targets {
+        if let Ok((_, text)) = run_capture(
+            "rustup",
+            &["target", "add", "--toolchain", toolchain, &target],
+        ) {
+            append_output(&mut output, &text);
+        }
+    }
+    if was_default {
+        match run("rustup", &["default", toolchain]) {
+            Ok(text) => append_output(&mut output, &text),
+            Err(error) => {
+                installed = false;
+                append_output(&mut output, &format!("恢复默认工具链失败：{error}"));
+            }
+        }
+    }
+
+    if installed {
+        if let Some(backup) = backup {
+            let _ = fs::remove_dir_all(backup);
+        }
+    } else {
+        restore_repair_backup(&toolchain_dir, backup.as_deref());
+    }
+    Ok((installed, output))
+}
+
+fn rustup_toolchains_dir() -> Option<PathBuf> {
+    env::var_os("RUSTUP_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".rustup")))
+        .map(|home| home.join("toolchains"))
+}
+
+fn repair_backup_path(toolchain_dir: &Path) -> PathBuf {
+    let name = toolchain_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("toolchain");
+    let mut candidate = toolchain_dir.with_file_name(format!("{name}.cargo-sweep-repair"));
+    let mut suffix = 1usize;
+    while candidate.exists() {
+        candidate = toolchain_dir.with_file_name(format!("{name}.cargo-sweep-repair-{suffix}"));
+        suffix += 1;
+    }
+    candidate
+}
+
+fn restore_repair_backup(toolchain_dir: &Path, backup: Option<&Path>) {
+    let Some(backup) = backup else {
+        return;
+    };
+    if toolchain_dir.exists() {
+        let _ = fs::remove_dir_all(toolchain_dir);
+    }
+    if backup.exists() {
+        let _ = fs::rename(backup, toolchain_dir);
+    }
+}
+
+fn installed_packages(kind: &str, toolchain: &str) -> Vec<String> {
+    run(
+        "rustup",
+        &[kind, "list", "--installed", "--toolchain", toolchain],
+    )
+    .unwrap_or_default()
+    .lines()
+    .map(str::trim)
+    .filter(|line| !line.is_empty())
+    .map(ToOwned::to_owned)
+    .collect()
+}
+
+fn append_output(output: &mut String, text: &str) {
+    if text.trim().is_empty() {
+        return;
+    }
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    output.push_str(text.trim());
 }
 
 pub fn uninstall(target: String) -> Result<ToolchainOperationResult, String> {
@@ -1500,6 +1694,19 @@ LLVM version: 23.1.1";
         assert_eq!(parse_stable_release("1.98.0"), Some((1, 98, 0)));
         assert_eq!(parse_stable_release("1.98"), None);
         assert_eq!(parse_stable_release("1.98.0-beta.1"), None);
+    }
+
+    #[test]
+    fn detects_toolchain_repair_errors() {
+        assert!(needs_toolchain_repair(
+            "could not rename component file: 目录不是空的 (os error 145)"
+        ));
+        assert!(needs_toolchain_repair(
+            "failed to install component: detected conflict: 'bin\\rust-gdb'"
+        ));
+        assert!(!needs_toolchain_repair(
+            "error: could not download file: http request returned 404"
+        ));
     }
 
     #[test]
