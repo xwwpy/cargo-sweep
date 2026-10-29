@@ -6,7 +6,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -1662,6 +1662,8 @@ struct RustupProgress {
     message: String,
     components: Vec<TrackedComponent>,
     component_sizes: Arc<Mutex<HashMap<String, u64>>>,
+    component_percent_max: Arc<Mutex<HashMap<String, u8>>>,
+    progress_floor: AtomicU8,
     started: Instant,
     last_progress_line: String,
     last_progress_at: Instant,
@@ -1678,6 +1680,8 @@ impl RustupProgress {
             message: "准备安装".into(),
             components: Vec::new(),
             component_sizes: Arc::new(Mutex::new(HashMap::new())),
+            component_percent_max: Arc::new(Mutex::new(HashMap::new())),
+            progress_floor: AtomicU8::new(0),
             started: Instant::now(),
             last_progress_line: String::new(),
             last_progress_at: Instant::now(),
@@ -1873,9 +1877,16 @@ impl RustupProgress {
         if component.total_bytes == 0 {
             return progress;
         }
-        let line = progress.message.clone();
+        let line = format!(
+            "[下载] {:<10} {:>3}%  {:>8} / {:>8}  {:>8}/s",
+            component.name,
+            component.percent,
+            progress_size(component.downloaded_bytes),
+            progress_size(component.total_bytes),
+            progress_size(component.speed_bps)
+        );
         if line != self.last_progress_line
-            && self.last_progress_at.elapsed() >= Duration::from_millis(900)
+            && self.last_progress_at.elapsed() >= Duration::from_millis(700)
         {
             self.last_progress_line = line.clone();
             self.last_progress_at = Instant::now();
@@ -1995,7 +2006,7 @@ impl RustupProgress {
                 } else {
                     component.downloaded_bytes.max(measured)
                 };
-                let percent = if total_bytes > 0 {
+                let measured_percent = if total_bytes > 0 {
                     downloaded_bytes
                         .saturating_mul(100)
                         .checked_div(total_bytes)
@@ -2003,6 +2014,27 @@ impl RustupProgress {
                         .min(100) as u8
                 } else {
                     component.percent
+                };
+                let previous_max = self
+                    .component_percent_max
+                    .lock()
+                    .ok()
+                    .and_then(|percentages| percentages.get(&component.name).copied())
+                    .unwrap_or(0);
+                let percent = if component.phase == "done" {
+                    100
+                } else {
+                    measured_percent.max(previous_max)
+                };
+                if let Ok(mut percentages) = self.component_percent_max.lock() {
+                    if percent > previous_max {
+                        percentages.insert(component.name.clone(), percent);
+                    }
+                }
+                let downloaded_bytes = if total_bytes > 0 && percent > measured_percent {
+                    total_bytes.saturating_mul(u64::from(percent)) / 100
+                } else {
+                    downloaded_bytes
                 };
                 ComponentProgress {
                     name: component.name.clone(),
@@ -2020,12 +2052,22 @@ impl RustupProgress {
                 }
             })
             .collect();
-        let percent = match self.phase.as_str() {
+        let computed_percent = match self.phase.as_str() {
             "done" => 100,
             "verify" | "queued" => 0,
             "download" => aggregate_percent.unwrap_or(0),
             "install" | "finalize" => aggregate_percent.unwrap_or(99).min(99),
             _ => self.percent,
+        };
+        let percent = if self.phase == "done" {
+            100
+        } else if self.phase == "verify" || self.phase == "queued" {
+            0
+        } else {
+            let floor = self.progress_floor.load(Ordering::Relaxed);
+            let next = computed_percent.max(floor).min(99);
+            self.progress_floor.store(next, Ordering::Relaxed);
+            next
         };
         let message = components
             .iter()
@@ -2035,11 +2077,12 @@ impl RustupProgress {
                 if component.phase == "downloading" {
                     if component.total_bytes > 0 {
                         format!(
-                            "正在下载 {} · {}%（{} / {}）",
+                            "正在下载 {} · {}%（{} / {} · {}/s）",
                             component.name,
                             component.percent,
                             progress_size(component.downloaded_bytes),
-                            progress_size(component.total_bytes)
+                            progress_size(component.total_bytes),
+                            progress_size(component.speed_bps)
                         )
                     } else {
                         format!("正在下载 {}", component.name)
@@ -2550,6 +2593,37 @@ LLVM version: 23.1.1";
                 "77%".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn progress_never_regresses_when_download_restarts() {
+        let meter = Arc::new(Mutex::new(DownloadMeter {
+            bytes: 99,
+            speed_bps: 0,
+        }));
+        let mut progress = RustupProgress::new(Arc::clone(&meter));
+        progress.phase = "download".into();
+        progress.components.push(TrackedComponent {
+            name: "rustfmt".into(),
+            phase: "downloading".into(),
+            percent: 0,
+            started: Some(Instant::now()),
+            elapsed_ms: 0,
+            speed_bps: 0,
+            start_meter_bytes: 0,
+            downloaded_bytes: 0,
+            total_bytes: Some(100),
+        });
+
+        let first = progress.snapshot(None);
+        assert_eq!(first.percent, 99);
+        assert_eq!(first.components[0].percent, 99);
+
+        meter.lock().unwrap().bytes = 0;
+        let restarted = progress.snapshot(None);
+        assert!(restarted.percent >= first.percent);
+        assert!(restarted.components[0].percent >= first.components[0].percent);
+        assert!(restarted.components[0].downloaded_bytes >= 99);
     }
 
     #[test]
