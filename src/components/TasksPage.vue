@@ -286,6 +286,10 @@ function isActive(task: BackgroundTask): boolean {
 
         <details v-if="task.output.length > 0" open class="task-output">
           <summary>任务输出（{{ task.output.length }} 行）</summary>
+          <div v-if="isActive(task)" class="task-live-output">
+            <span />
+            {{ task.message }}
+          </div>
           <pre>{{ task.output.join("\n") }}</pre>
         </details>
 
@@ -696,6 +700,27 @@ function isActive(task: BackgroundTask): boolean {
   color: #d8b4fe;
   cursor: pointer;
   background: rgba(168, 85, 247, 0.08);
+}
+
+.task-live-output {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 10px;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8px;
+  color: #5eead4;
+  background: rgba(20, 184, 166, 0.12);
+  border-top: 1px solid rgba(94, 234, 212, 0.12);
+  border-bottom: 1px solid rgba(94, 234, 212, 0.12);
+}
+
+.task-live-output > span {
+  width: 5px;
+  height: 5px;
+  background: #2dd4bf;
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(45, 212, 191, 0.8);
 }
 
 .task-output pre {

@@ -1714,16 +1714,19 @@ impl RustupProgress {
             if let Some(url) = clean.split("downloading file url=").nth(1) {
                 let url = url.trim();
                 if let Some(name) = component_name_from_url(url) {
-                    let current_name = self
+                    let existing = self
                         .components
                         .iter()
-                        .rev()
-                        .find(|component| component.phase == "downloading")
-                        .map(|component| component.name.clone());
-                    if current_name.as_deref() != Some(name.as_str()) {
+                        .position(|component| component.name == name);
+                    if let Some(index) = existing {
+                        // A retried or repeated archive URL must not add a
+                        // second row for the same component.
+                        if self.components[index].phase != "downloading" {
+                            return self.snapshot(None);
+                        }
+                    } else {
                         self.finish_downloading();
                         self.downloads = self.downloads.saturating_add(1);
-                        self.phase = "download".into();
                         self.components.push(TrackedComponent {
                             name: name.clone(),
                             phase: "downloading".into(),
@@ -1780,23 +1783,33 @@ impl RustupProgress {
             self.phase = "download".into();
             self.message = clean.trim().to_string();
         } else if lower.contains("downloading component") {
-            self.finish_downloading();
             let name = component_name(&clean);
-            self.downloads = self.downloads.saturating_add(1);
+            let existing = self
+                .components
+                .iter()
+                .position(|component| component.name == name);
+            if let Some(index) = existing {
+                if self.components[index].phase != "downloading" {
+                    return self.snapshot(Some(clean));
+                }
+            } else {
+                self.finish_downloading();
+                self.downloads = self.downloads.saturating_add(1);
+                self.components.push(TrackedComponent {
+                    name: name.clone(),
+                    phase: "downloading".into(),
+                    percent: 0,
+                    started: Some(Instant::now()),
+                    elapsed_ms: 0,
+                    speed_bps: 0,
+                    start_meter_bytes: self.meter_values().bytes,
+                    downloaded_bytes: 0,
+                    total_bytes: None,
+                });
+            }
             self.phase = "download".into();
             self.percent = self.percent.max(12 + self.downloads.min(6) * 6);
             self.message = format!("正在下载 {name}");
-            self.components.push(TrackedComponent {
-                name,
-                phase: "downloading".into(),
-                percent: 0,
-                started: Some(Instant::now()),
-                elapsed_ms: 0,
-                speed_bps: 0,
-                start_meter_bytes: self.meter_values().bytes,
-                downloaded_bytes: 0,
-                total_bytes: None,
-            });
         } else if lower.contains("installing component") {
             self.finish_downloading();
             let name = component_name(&clean);
@@ -1862,7 +1875,7 @@ impl RustupProgress {
         }
         let line = progress.message.clone();
         if line != self.last_progress_line
-            && self.last_progress_at.elapsed() >= Duration::from_millis(700)
+            && self.last_progress_at.elapsed() >= Duration::from_millis(900)
         {
             self.last_progress_line = line.clone();
             self.last_progress_at = Instant::now();
@@ -2537,6 +2550,20 @@ LLVM version: 23.1.1";
                 "77%".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn repeated_archive_url_does_not_duplicate_component() {
+        let mut progress = RustupProgress::new(Arc::new(Mutex::new(DownloadMeter::default())));
+        progress.observe("info: downloading 6 components");
+        progress.observe(
+            "debug: downloading file url=https://static.rust-lang.org/dist/2025-09-18/cargo-1.90.0-x86_64-pc-windows-msvc.tar.xz",
+        );
+        let snapshot = progress.observe(
+            "debug: downloading file url=https://static.rust-lang.org/dist/2025-09-18/cargo-1.90.0-x86_64-pc-windows-msvc.tar.xz",
+        );
+        assert_eq!(snapshot.components.len(), 1);
+        assert_eq!(snapshot.components[0].name, "cargo");
     }
 
     #[test]
