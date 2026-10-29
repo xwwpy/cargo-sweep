@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::UNIX_EPOCH;
 
 #[derive(Default)]
 pub struct TaskControl {
@@ -210,22 +209,8 @@ fn rustup_home() -> Option<PathBuf> {
         .or_else(|| dirs::home_dir().map(|home| home.join(".rustup")))
 }
 
-fn modified_ms(path: &Path) -> Option<u64> {
-    let modified = fs::metadata(path).ok()?.modified().ok()?;
-    modified
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .map(|duration| duration.as_millis() as u64)
-}
-
-fn remove_artifact(path: &Path, started_ms: u64) -> (u64, u64) {
-    let Some(modified) = modified_ms(path) else {
-        return (0, 0);
-    };
-    if modified.saturating_add(2_000) < started_ms {
-        return (0, 0);
-    }
-    let metadata = match fs::metadata(path) {
+fn remove_artifact(path: &Path) -> (u64, u64) {
+    let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(_) => return (0, 0),
     };
@@ -234,19 +219,25 @@ fn remove_artifact(path: &Path, started_ms: u64) -> (u64, u64) {
     } else {
         0
     };
-    let removed = if metadata.is_dir() {
-        fs::remove_dir_all(path).is_ok()
-    } else {
-        fs::remove_file(path).is_ok()
-    };
-    if removed {
-        (1, freed)
-    } else {
-        (0, 0)
+    for attempt in 0..3 {
+        let removed = if metadata.file_type().is_symlink() {
+            fs::remove_file(path).is_ok()
+        } else if metadata.is_dir() {
+            fs::remove_dir_all(path).is_ok()
+        } else {
+            fs::remove_file(path).is_ok()
+        };
+        if removed {
+            return (1, freed);
+        }
+        if attempt < 2 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
     }
+    (0, 0)
 }
 
-pub fn cleanup_artifacts(started_ms: u64, kind: &str) -> CleanupReport {
+pub fn cleanup_artifacts(_started_ms: u64, kind: &str) -> CleanupReport {
     if kind == "delete" {
         return CleanupReport {
             removed_files: 0,
@@ -271,6 +262,10 @@ pub fn cleanup_artifacts(started_ms: u64, kind: &str) -> CleanupReport {
             message: "未找到 RUSTUP_HOME，没有可清理的临时文件".into(),
         };
     };
+    cleanup_artifacts_in(&home)
+}
+
+fn cleanup_artifacts_in(home: &Path) -> CleanupReport {
     let mut removed_files = 0;
     let mut freed_bytes = 0;
     for folder in ["downloads", "tmp"] {
@@ -279,7 +274,7 @@ pub fn cleanup_artifacts(started_ms: u64, kind: &str) -> CleanupReport {
             continue;
         };
         for entry in entries.flatten() {
-            let (count, bytes) = remove_artifact(&entry.path(), started_ms);
+            let (count, bytes) = remove_artifact(&entry.path());
             removed_files += count;
             freed_bytes += bytes;
         }
@@ -293,5 +288,37 @@ pub fn cleanup_artifacts(started_ms: u64, kind: &str) -> CleanupReport {
         } else {
             "没有发现需要清理的临时文件".into()
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process;
+
+    #[test]
+    fn cleanup_removes_all_download_and_temp_entries() {
+        let root = std::env::temp_dir().join(format!(
+            "cargo-sweep-cleanup-{}-{}",
+            process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default()
+        ));
+        let downloads = root.join("downloads");
+        let temporary = root.join("tmp");
+        fs::create_dir_all(&downloads).unwrap();
+        fs::create_dir_all(temporary.join("partial")).unwrap();
+        fs::write(downloads.join("archive"), vec![0u8; 32]).unwrap();
+        fs::write(temporary.join("partial").join("file"), b"partial").unwrap();
+
+        let report = cleanup_artifacts_in(&root);
+
+        assert!(report.removed_files >= 2);
+        assert!(report.freed_bytes >= 32);
+        assert!(!downloads.join("archive").exists());
+        assert!(!temporary.join("partial").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 }

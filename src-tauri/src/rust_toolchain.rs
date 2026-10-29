@@ -1573,6 +1573,18 @@ struct TrackedComponent {
     total_bytes: Option<u64>,
 }
 
+fn progress_size(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 * 1024 {
+        format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    } else if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.0} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 fn remote_content_size(url: &str) -> Option<u64> {
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(3))
@@ -1580,14 +1592,12 @@ fn remote_content_size(url: &str) -> Option<u64> {
         .user_agent(format!("cargo-sweep/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .ok()?;
-    if let Some(size) = client
-        .head(url)
-        .send()
-        .ok()
-        .filter(|response| response.status().is_success())
-        .and_then(|response| response.content_length())
-    {
-        return Some(size);
+    if let Ok(response) = client.head(url).send() {
+        if response.status().is_success() {
+            if let Some(size) = response.content_length().filter(|size| *size > 0) {
+                return Some(size);
+            }
+        }
     }
     let response = client
         .get(url)
@@ -1601,10 +1611,11 @@ fn remote_content_size(url: &str) -> Option<u64> {
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.rsplit('/').next())
         .and_then(|value| value.parse::<u64>().ok())
+        .filter(|total| *total > 0)
     {
         return Some(total);
     }
-    response.content_length()
+    response.content_length().filter(|size| *size > 1)
 }
 
 struct RustupProgress {
@@ -1615,6 +1626,8 @@ struct RustupProgress {
     message: String,
     components: Vec<TrackedComponent>,
     started: Instant,
+    last_progress_line: String,
+    last_progress_at: Instant,
     meter: Arc<Mutex<DownloadMeter>>,
 }
 
@@ -1628,6 +1641,8 @@ impl RustupProgress {
             message: "准备安装".into(),
             components: Vec::new(),
             started: Instant::now(),
+            last_progress_line: String::new(),
+            last_progress_at: Instant::now(),
             meter,
         }
     }
@@ -1644,8 +1659,7 @@ impl RustupProgress {
     fn observe(&mut self, line: &str) -> OperationProgress {
         let clean = strip_ansi(line);
         if clean.trim().is_empty() {
-            self.refresh_verify_message();
-            return self.snapshot(None);
+            return self.tick();
         }
         let lower = clean.to_ascii_lowercase();
         if lower.contains("downloading file url=") {
@@ -1738,6 +1752,34 @@ impl RustupProgress {
         self.snapshot(Some(clean))
     }
 
+    fn tick(&mut self) -> OperationProgress {
+        self.refresh_verify_message();
+        let mut progress = self.snapshot(None);
+        if self.phase != "download" {
+            return progress;
+        }
+        let Some(component) = progress
+            .components
+            .iter()
+            .rev()
+            .find(|component| component.phase == "downloading")
+        else {
+            return progress;
+        };
+        if component.total_bytes == 0 {
+            return progress;
+        }
+        let line = progress.message.clone();
+        if line != self.last_progress_line
+            && self.last_progress_at.elapsed() >= Duration::from_millis(700)
+        {
+            self.last_progress_line = line.clone();
+            self.last_progress_at = Instant::now();
+            progress.line = Some(line);
+        }
+        progress
+    }
+
     fn refresh_verify_message(&mut self) {
         if self.phase != "verify" {
             return;
@@ -1824,7 +1866,7 @@ impl RustupProgress {
         let now = Instant::now();
         let meter = self.meter_values();
         let aggregate_percent = self.known_download_percent(meter.bytes);
-        let components = self
+        let components: Vec<ComponentProgress> = self
             .components
             .iter()
             .map(|component| {
@@ -1880,9 +1922,31 @@ impl RustupProgress {
             "install" | "finalize" => aggregate_percent.unwrap_or(99).min(99),
             _ => self.percent,
         };
+        let message = components
+            .iter()
+            .rev()
+            .find(|component| component.phase == "downloading" || component.phase == "installing")
+            .map(|component| {
+                if component.phase == "downloading" {
+                    if component.total_bytes > 0 {
+                        format!(
+                            "正在下载 {} · {}%（{} / {}）",
+                            component.name,
+                            component.percent,
+                            progress_size(component.downloaded_bytes),
+                            progress_size(component.total_bytes)
+                        )
+                    } else {
+                        format!("正在下载 {}", component.name)
+                    }
+                } else {
+                    format!("正在安装 {}", component.name)
+                }
+            })
+            .unwrap_or_else(|| self.message.clone());
         OperationProgress {
             percent,
-            message: self.message.clone(),
+            message,
             phase: self.phase.clone(),
             line,
             components,
@@ -2233,7 +2297,7 @@ LLVM version: 23.1.1";
         assert_eq!(syncing.percent, 0);
         assert_eq!(syncing.phase, "verify");
         let download = progress.observe("info: downloading component 'rustc'");
-        assert!(download.message.contains("rustc"));
+        assert_eq!(download.message, "正在下载 rustc");
         assert_eq!(download.percent, 0);
         assert_eq!(download.components[0].phase, "downloading");
         let json = serde_json::to_value(&download).unwrap();
@@ -2241,6 +2305,7 @@ LLVM version: 23.1.1";
         assert_eq!(json["components"][0]["indeterminate"], true);
         assert!(json["speedBps"].is_number());
         let install = progress.observe("info: installing component 'rustc'");
+        assert_eq!(install.message, "正在安装 rustc");
         assert!(install.percent > download.percent);
         assert_eq!(install.components[0].phase, "installing");
         assert_eq!(
@@ -2263,6 +2328,28 @@ LLVM version: 23.1.1";
         assert!(success);
         assert!(text.contains("rustc"));
         assert!(lines > 0);
+    }
+
+    #[test]
+    #[ignore = "requires access to static.rust-lang.org"]
+    fn resolves_component_archive_size() {
+        let mut progress = RustupProgress::new(Arc::new(Mutex::new(DownloadMeter::default())));
+        progress.observe("info: downloading component 'rust-std'");
+        let snapshot = progress.observe(
+            "debug: downloading file url=https://static.rust-lang.org/dist/2026-10-15/rust-std-1.99.1-x86_64-pc-windows-msvc.tar.xz",
+        );
+        let component = &snapshot.components[0];
+        assert_eq!(component.name, "rust-std");
+        assert!(component.total_bytes > 0);
+        assert!(!component.indeterminate);
+    }
+
+    #[test]
+    fn formats_component_progress_sizes() {
+        assert_eq!(progress_size(500), "500 B");
+        assert_eq!(progress_size(2048), "2 KB");
+        assert_eq!(progress_size(5 * 1024 * 1024), "5.0 MB");
+        assert_eq!(progress_size(2 * 1024 * 1024 * 1024), "2.0 GB");
     }
 
     #[test]

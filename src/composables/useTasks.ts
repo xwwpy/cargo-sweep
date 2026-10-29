@@ -199,7 +199,7 @@ export function startTask<T>(options: StartTaskOptions<T>): string {
         current.status = "cancelled";
         current.message = "任务已取消";
         current.percent = Math.min(current.percent, 99);
-        void cleanupTask(taskId);
+        window.setTimeout(() => void cleanupTask(taskId), 800);
       } else {
         const failed =
           typeof result === "object" &&
@@ -225,7 +225,7 @@ export function startTask<T>(options: StartTaskOptions<T>): string {
       if (current.cancelRequested) {
         current.status = "cancelled";
         current.message = "任务已取消";
-        void cleanupTask(taskId);
+        window.setTimeout(() => void cleanupTask(taskId), 800);
       } else {
         current.status = "failed";
         current.message = "任务失败";
@@ -265,11 +265,20 @@ export async function cleanupTask(
   }
   task.cleanupState = "cleaning";
   try {
-    const report = await cleanupTaskArtifacts(task.startedAt, task.kind);
-    task.cleanupState = "done";
-    task.cleanupMessage = report.skipped
-      ? report.message
-      : `${report.message}（${report.removedFiles} 个文件）`;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const report = await cleanupTaskArtifacts(task.startedAt, task.kind);
+      if (report.skipped && attempt < 2) {
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, 900 * (attempt + 1)),
+        );
+        continue;
+      }
+      task.cleanupState = report.skipped ? "failed" : "done";
+      task.cleanupMessage = report.skipped
+        ? report.message
+        : `${report.message}（${report.removedFiles} 个文件）`;
+      break;
+    }
   } catch (error) {
     task.cleanupState = "failed";
     task.cleanupMessage = `清理失败：${errorMessage(error)}`;
