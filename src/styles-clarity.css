@@ -417,6 +417,33 @@
   font-size: 16px;
 }
 
+#app .latest-warning {
+  padding: 10px 12px;
+  font-size: 11px !important;
+  line-height: 1.55;
+}
+
+#app .latest-warning button {
+  font-size: 11px !important;
+}
+
+#app .latest-warning.exhausted {
+  color: #b42318;
+  background: #fef3f2;
+  border-color: #fda29b;
+}
+
+html.dark #app .latest-warning.exhausted {
+  color: #fda29b;
+  background: rgba(180, 35, 24, 0.12);
+  border-color: rgba(253, 162, 155, 0.28);
+}
+
+#app .latest-warning button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
 #app .source-name {
   font-size: 14px;
   font-weight: 700;

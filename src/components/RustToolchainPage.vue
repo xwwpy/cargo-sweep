@@ -133,6 +133,10 @@ const latest = ref<LatestRustVersions | null>(cachedLatest);
 const latestError = ref<string | null>(cachedLatest?.error ?? null);
 const loading = ref(true);
 const latestLoading = ref(!cachedLatest);
+const MAX_LATEST_RETRIES = 3;
+const latestRetryCount = ref(0);
+const latestRetryExhausted = ref(false);
+let latestRefreshPromise: Promise<LatestRustVersions> | null = null;
 const error = ref<string | null>(null);
 const actionOutput = ref<string | null>(null);
 const actionSuccess = ref<boolean | null>(null);
@@ -708,6 +712,12 @@ function channelState(view: ChannelView): string {
   return `可更新到 ${view.latestRelease}`;
 }
 
+function latestLoadingText(): string {
+  return latestRetryCount.value > 0
+    ? `重试 ${latestRetryCount.value}/${MAX_LATEST_RETRIES}…`
+    : "检测中…";
+}
+
 function actionLabel(view: ChannelView): string {
   if (!view.installed) {
     return "安装";
@@ -758,14 +768,57 @@ function stopTimer() {
   timer = undefined;
 }
 
-async function refreshLatestVersions(): Promise<LatestRustVersions> {
-  const next = await checkRustToolchainLatest();
-  latest.value = next;
-  latestError.value = next.error;
-  if (!next.error) {
-    setCachedRustLatest(next);
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function fetchLatestWithRetry(): Promise<LatestRustVersions> {
+  let lastError: unknown = null;
+  latestRetryCount.value = 0;
+  latestRetryExhausted.value = false;
+  latestError.value = null;
+  for (let attempt = 0; attempt <= MAX_LATEST_RETRIES; attempt += 1) {
+    if (attempt > 0) {
+      latestRetryCount.value = attempt;
+      await wait(450 * attempt);
+    }
+    try {
+      const next = await checkRustToolchainLatest();
+      latest.value = next;
+      latestError.value = next.error;
+      if (!next.error && next.stable && next.nightly) {
+        latestRetryCount.value = 0;
+        latestRetryExhausted.value = false;
+        return next;
+      }
+      lastError =
+        next.error ??
+        (!next.stable || !next.nightly
+          ? "Stable / Nightly 版本信息不完整"
+          : "未获取到最新版本信息");
+    } catch (reason) {
+      lastError = reason;
+    }
   }
-  return next;
+  latestRetryCount.value = MAX_LATEST_RETRIES;
+  latestRetryExhausted.value = true;
+  throw new Error(
+    `已自动重试 ${MAX_LATEST_RETRIES} 次：${errorMessage(lastError)}`,
+  );
+}
+
+async function refreshLatestVersions(): Promise<LatestRustVersions> {
+  if (latestRefreshPromise) {
+    return latestRefreshPromise;
+  }
+  latestRefreshPromise = (async () => {
+    const next = await fetchLatestWithRetry();
+    setCachedRustLatest(next);
+    return next;
+  })().finally(() => {
+    latestRefreshPromise = null;
+  });
+  return latestRefreshPromise;
 }
 
 async function loadLatest(force = false) {
@@ -774,6 +827,8 @@ async function loadLatest(force = false) {
     if (cached) {
       latest.value = cached;
       latestError.value = cached.error;
+      latestRetryCount.value = 0;
+      latestRetryExhausted.value = false;
       latestLoading.value = false;
       return;
     }
@@ -1365,7 +1420,7 @@ async function updateChannel(view: ChannelView) {
     // build again; stale channel cards must not trigger an unnecessary update.
     const [freshStatus, freshLatest] = await Promise.all([
       detectRustToolchain(),
-      checkRustToolchainLatest(),
+      refreshLatestVersions(),
     ]);
     status.value = freshStatus;
     latest.value = freshLatest;
@@ -1793,7 +1848,9 @@ onUnmounted(() => {
         <div class="current-latest">
           <span>最新版本</span>
           <strong>
-            <template v-if="latestLoading">检测中…</template>
+            <template v-if="latestLoading">{{
+              latestLoadingText()
+            }}</template>
             <template v-else>{{ latestVersion || "未获取" }}</template>
           </strong>
           <small v-if="latestBuild">{{ latestBuild }}</small>
@@ -1804,10 +1861,23 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <div v-if="latestError" class="latest-warning">
+      <div
+        v-if="latestError"
+        class="latest-warning"
+        :class="{ exhausted: latestRetryExhausted }"
+      >
         <el-icon><WarningFilled /></el-icon>
-        <span>最新版本获取失败：{{ latestError }}</span>
-        <button type="button" @click="retryLatest">重试</button>
+        <span v-if="latestRetryExhausted">
+          最新版本检测失败，已自动重试 {{ MAX_LATEST_RETRIES }} 次。请更换网络（或关闭代理 / VPN）后重试。
+        </span>
+        <span v-else-if="latestLoading && latestRetryCount > 0">
+          最新版本获取失败，正在自动重试
+          {{ latestRetryCount }}/{{ MAX_LATEST_RETRIES }}…
+        </span>
+        <span v-else>最新版本获取失败：{{ latestError }}</span>
+        <button type="button" :disabled="latestLoading" @click="retryLatest">
+          重试
+        </button>
       </div>
 
       </template>
@@ -2102,8 +2172,12 @@ onUnmounted(() => {
             <div>
               <span class="version-label">最新</span>
               <strong>
-                <template v-if="latestLoading">检测中…</template>
-                <template v-else>{{ channel.latestRelease || "未知" }}</template>
+                <template v-if="latestLoading">{{
+                  latestLoadingText()
+                }}</template>
+                <template v-else>{{
+                  channel.latestRelease || "未知"
+                }}</template>
               </strong>
               <span v-if="channel.latestBuild" class="build-label">
                 {{ channel.latestBuild }}
