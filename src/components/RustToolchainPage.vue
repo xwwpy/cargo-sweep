@@ -9,6 +9,7 @@ import {
 } from "../lib/rustLatestCache";
 import { operationBusy as busy } from "../composables/useOperationBusy";
 import {
+  activeTasks,
   hasActiveResource,
   startTask,
 } from "../composables/useTasks";
@@ -112,6 +113,14 @@ function readToolchainSection(): ToolchainSection {
 }
 
 const activeToolchainSection = ref<ToolchainSection>(readToolchainSection());
+const activeInstallTask = computed(
+  () =>
+    activeTasks.value.find(
+      (task) =>
+        task.kind === "toolchain" &&
+        (task.status === "running" || task.status === "cancelling"),
+    ) ?? null,
+);
 const toolchainSectionTitle = computed(
   () =>
     toolchainSections.find(
@@ -1674,6 +1683,22 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <div v-if="activeInstallTask" class="toolchain-network-strip">
+        <span class="network-strip-title">
+          <el-icon class="spinning"><Refresh /></el-icon>
+          {{ activeInstallTask.title }}
+        </span>
+        <span class="network-strip-message">{{ activeInstallTask.message }}</span>
+        <span>
+          当前速度
+          <strong>{{ formatSpeed(activeInstallTask.speedBps) }}</strong>
+        </span>
+        <span>
+          已下载
+          <strong>{{ formatBytes(activeInstallTask.downloadedBytes) }}</strong>
+        </span>
+      </div>
+
       <nav class="toolchain-section-nav" aria-label="Rust 环境分区">
         <button
           v-for="section in toolchainSections"
@@ -2476,6 +2501,62 @@ onUnmounted(() => {
 
 .toolchain-page.is-embedded {
   padding-top: 2px;
+}
+
+.toolchain-network-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  padding: 9px 12px;
+  margin: 6px 0 2px;
+  font-size: 11px;
+  color: #7d6f92;
+  background: linear-gradient(
+    100deg,
+    var(--accent-1-soft, #fdf2f8),
+    rgba(255, 255, 255, 0.7)
+  );
+  border: 1px solid var(--accent-1-soft-line, rgba(236, 72, 153, 0.2));
+  border-radius: 10px;
+}
+
+.network-strip-title {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  font-weight: 650;
+  color: var(--accent-1-deep, #be185d);
+}
+
+.network-strip-message {
+  flex: 1;
+  min-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolchain-network-strip strong {
+  margin-left: 3px;
+  font-size: 11.5px;
+  color: var(--accent-1-deep, #be185d);
+  font-variant-numeric: tabular-nums;
+}
+
+html.dark .toolchain-network-strip {
+  color: #c4b5d6;
+  background: linear-gradient(
+    100deg,
+    rgba(236, 72, 153, 0.12),
+    rgba(255, 255, 255, 0.03)
+  );
+  border-color: rgba(236, 72, 153, 0.22);
+}
+
+html.dark .network-strip-title,
+html.dark .toolchain-network-strip strong {
+  color: var(--accent-1-bright);
 }
 
 .toolchain-section-nav {

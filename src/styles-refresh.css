@@ -2046,6 +2046,12 @@ html.dark #app .minimal .current-latest strong {
   white-space: nowrap;
 }
 
+.task-dock-speed {
+  font-size: 7.5px;
+  color: var(--accent-1);
+  font-variant-numeric: tabular-nums;
+}
+
 .task-dock-open {
   display: flex;
   flex: 0 0 auto;

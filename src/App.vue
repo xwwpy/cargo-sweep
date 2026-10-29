@@ -36,6 +36,8 @@ import {
   activeTasks,
   hasRunningDeleteTask,
   startTask,
+  taskHasDeterminateProgress,
+  taskSupportsNetwork,
 } from "./composables/useTasks";
 import {
   defaultScanRoots,
@@ -922,11 +924,13 @@ function uniqueRoots(list: string[]): string[] {
             {{ activeTasks.length }} 个后台任务
             <strong>
               {{
-                activeTasks[0].progressMode === "determinate"
+                taskHasDeterminateProgress(activeTasks[0])
                   ? `${activeTasks[0].percent}%`
                   : activeTasks[0].status === "cancelling"
                     ? "取消中"
-                    : "处理中"
+                    : activeTasks[0].phase === "verify"
+                      ? "同步中"
+                      : "处理中"
               }}
             </strong>
           </span>
@@ -934,20 +938,30 @@ function uniqueRoots(list: string[]): string[] {
           <span class="task-dock-message">
             {{ activeTasks[0].message }}
           </span>
+          <span
+            v-if="taskSupportsNetwork(activeTasks[0])"
+            class="task-dock-speed"
+          >
+            {{
+              activeTasks[0].speedBps > 0
+                ? `${formatBytes(activeTasks[0].speedBps)}/s`
+                : "测速中…"
+            }}
+            · 已下载 {{ formatBytes(activeTasks[0].downloadedBytes) }}
+          </span>
           <div
             class="task-dock-track"
             :class="{
               indeterminate:
-                activeTasks[0].progressMode === 'indeterminate' &&
+                !taskHasDeterminateProgress(activeTasks[0]) &&
                 activeTasks[0].status === 'running',
             }"
           >
             <span
               :style="{
-                width:
-                  activeTasks[0].progressMode === 'determinate'
-                    ? `${activeTasks[0].percent}%`
-                    : '100%',
+                width: taskHasDeterminateProgress(activeTasks[0])
+                  ? `${activeTasks[0].percent}%`
+                  : '100%',
               }"
             />
           </div>

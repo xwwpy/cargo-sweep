@@ -79,6 +79,18 @@ export function hasActiveResource(resourceKey: string): boolean {
   return activeTasks.value.some((task) => task.resourceKey === resourceKey);
 }
 
+export function taskHasDeterminateProgress(task: BackgroundTask): boolean {
+  return (
+    task.progressMode === "determinate" &&
+    task.phase !== "verify" &&
+    task.phase !== "queued"
+  );
+}
+
+export function taskSupportsNetwork(task: BackgroundTask): boolean {
+  return task.kind === "toolchain" || task.kind === "rustup";
+}
+
 function createId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();

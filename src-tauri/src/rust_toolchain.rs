@@ -1445,11 +1445,15 @@ impl RustupProgress {
 impl RustupProgress {
     fn observe(&mut self, line: &str) -> OperationProgress {
         let clean = strip_ansi(line);
+        if clean.trim().is_empty() {
+            self.refresh_verify_message();
+            return self.snapshot(None);
+        }
         let lower = clean.to_ascii_lowercase();
         if lower.contains("syncing channel updates") {
             self.phase = "verify".into();
             self.percent = self.percent.max(8);
-            self.message = "验证版本与组件信息".into();
+            self.message = "正在验证版本与组件信息…".into();
         } else if lower.contains("downloading component") {
             self.finish_downloading();
             let name = component_name(&clean);
@@ -1506,6 +1510,20 @@ impl RustupProgress {
             self.message = clean.trim().to_string();
         }
         self.snapshot(Some(clean))
+    }
+
+    fn refresh_verify_message(&mut self) {
+        if self.phase != "verify" {
+            return;
+        }
+        let seconds = self.started.elapsed().as_secs();
+        self.message = if seconds < 4 {
+            "正在验证版本与组件信息…".into()
+        } else if seconds < 12 {
+            "正在同步版本清单…".into()
+        } else {
+            "正在获取组件信息，网络较慢…".into()
+        };
     }
 
     fn finish_downloading(&mut self) {

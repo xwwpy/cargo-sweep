@@ -16,8 +16,11 @@ import {
   cleanupTask,
   clearFinishedTasks,
   removeTask,
+  taskHasDeterminateProgress,
+  taskSupportsNetwork,
   type BackgroundTask,
 } from "../composables/useTasks";
+import { formatBytes } from "../lib/format";
 
 const now = ref(Date.now());
 let clock: number | undefined;
@@ -84,14 +87,22 @@ function componentPhaseLabel(phase: string): string {
 }
 
 function progressLabel(task: BackgroundTask): string {
-  if (task.progressMode === "indeterminate") {
-    return isActive(task)
-      ? task.status === "cancelling"
-        ? "取消中"
-        : "处理中"
-      : statusLabel(task);
+  if (!taskHasDeterminateProgress(task)) {
+    if (isActive(task)) {
+      if (task.status === "cancelling") {
+        return "取消中";
+      }
+      return task.phase === "verify" ? "同步中" : "处理中";
+    }
+    return statusLabel(task);
   }
   return `${task.percent}%`;
+}
+
+function speedLabel(bytesPerSecond: number): string {
+  return bytesPerSecond > 0
+    ? `${formatBytes(bytesPerSecond)}/s`
+    : "测速中…";
 }
 
 function elapsedLabel(task: BackgroundTask): string {
@@ -204,22 +215,35 @@ function isActive(task: BackgroundTask): boolean {
             class="task-progress-track"
             :class="{
               indeterminate:
-                task.progressMode === 'indeterminate' &&
+                !taskHasDeterminateProgress(task) &&
                 task.status === 'running',
               failed: task.status === 'failed',
             }"
           >
             <span
               :style="{
-                width:
-                  task.progressMode === 'determinate'
-                    ? `${task.percent}%`
-                    : '100%',
+                width: taskHasDeterminateProgress(task)
+                  ? `${task.percent}%`
+                  : '100%',
               }"
             />
           </div>
           <span class="task-progress-value">{{ progressLabel(task) }}</span>
           <span>{{ elapsedLabel(task) }}</span>
+        </div>
+
+        <div
+          v-if="taskSupportsNetwork(task) && isActive(task)"
+          class="task-network"
+        >
+          <span>
+            当前速度
+            <strong>{{ speedLabel(task.speedBps) }}</strong>
+          </span>
+          <span>
+            本次已下载
+            <strong>{{ formatBytes(task.downloadedBytes) }}</strong>
+          </span>
         </div>
         <p class="task-message">{{ task.message }}</p>
 
@@ -559,6 +583,22 @@ function isActive(task: BackgroundTask): boolean {
   to {
     background-position: -80% 0;
   }
+}
+
+.task-network {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 7px;
+  font-size: 10px;
+  color: var(--app-muted);
+}
+
+.task-network strong {
+  margin-left: 3px;
+  font-size: 11px;
+  color: var(--accent-1);
+  font-variant-numeric: tabular-nums;
 }
 
 .task-message {
