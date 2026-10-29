@@ -20,12 +20,25 @@ use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 
 #[derive(Default)]
 struct OperationState {
     active: AtomicBool,
+}
+
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+#[tauri::command]
+fn log_frontend_error(message: String) {
+    startup_log(&format!("FRONTEND ERROR: {message}"));
 }
 
 fn startup_log(message: &str) {
@@ -433,6 +446,13 @@ pub fn run() {
     ));
 
     let app = match tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -449,7 +469,18 @@ pub fn run() {
                 }
             }
         })
-        .setup(|_app| {
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                let fallback = window.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(2500));
+                    if !fallback.is_visible().unwrap_or(false) {
+                        startup_log("Showing main window from startup fallback");
+                        let _ = fallback.show();
+                        let _ = fallback.set_focus();
+                    }
+                });
+            }
             startup_log("Tauri setup completed");
             Ok(())
         })
@@ -459,6 +490,8 @@ pub fn run() {
             cancel_background_task,
             cleanup_task_artifacts,
             test_source_speed,
+            show_main_window,
+            log_frontend_error,
             default_scan_roots,
             cargo_home_status,
             rustup_source_status,

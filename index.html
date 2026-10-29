@@ -11,6 +11,125 @@
     />
     <title>Cargo Sweep · Rust Target 清理器</title>
   </head>
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      background: #f7f3fd;
+    }
+
+    body {
+      overflow: hidden;
+    }
+
+    #boot-splash {
+      display: grid;
+      width: 100vw;
+      height: 100vh;
+      color: #241832;
+      background:
+        radial-gradient(circle at 20% 10%, rgba(236, 72, 153, 0.12), transparent 34%),
+        radial-gradient(circle at 85% 90%, rgba(34, 211, 238, 0.12), transparent 32%),
+        #f7f3fd;
+      place-items: center;
+    }
+
+    .boot-card {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: center;
+      max-width: 280px;
+      padding: 32px;
+      text-align: center;
+    }
+
+    .boot-logo {
+      width: 54px;
+      height: 54px;
+      margin-bottom: 4px;
+      border-radius: 16px;
+      box-shadow: 0 16px 34px rgba(40, 10, 60, 0.2);
+    }
+
+    .boot-kicker {
+      font-family: "Segoe UI", sans-serif;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 2.7px;
+      color: #db2777;
+    }
+
+    .boot-card h1 {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      font-size: 20px;
+      font-weight: 720;
+      letter-spacing: -0.5px;
+    }
+
+    .boot-card p {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      font-size: 10px;
+      line-height: 1.5;
+      color: #7d6f92;
+    }
+
+    .boot-spinner {
+      width: 20px;
+      height: 20px;
+      margin-top: 10px;
+      border: 2px solid rgba(219, 39, 119, 0.18);
+      border-top-color: #db2777;
+      border-radius: 50%;
+      animation: boot-spin 0.9s linear infinite;
+    }
+
+    .boot-reload {
+      display: none;
+      padding: 7px 13px;
+      margin-top: 8px;
+      font-size: 10px;
+      color: #fff;
+      cursor: pointer;
+      background: #db2777;
+      border: 0;
+      border-radius: 8px;
+    }
+
+    #boot-splash.failed .boot-spinner {
+      display: none;
+    }
+
+    #boot-splash.failed .boot-reload {
+      display: block;
+    }
+
+    html.dark,
+    html.dark body {
+      background: #080510;
+    }
+
+    html.dark #boot-splash {
+      color: #f7efff;
+      background:
+        radial-gradient(circle at 20% 10%, rgba(236, 72, 153, 0.16), transparent 34%),
+        radial-gradient(circle at 85% 90%, rgba(34, 211, 238, 0.1), transparent 32%),
+        #080510;
+    }
+
+    html.dark .boot-card p {
+      color: #a99bb8;
+    }
+
+    @keyframes boot-spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+  </style>
   <body>
     <script>
       (function () {
@@ -29,7 +148,77 @@
         }
       })();
     </script>
-    <div id="app"></div>
+    <div id="app">
+      <div id="boot-splash">
+        <div class="boot-card">
+          <img class="boot-logo" src="/logo.svg" alt="" />
+          <span class="boot-kicker">CARGO SWEEP</span>
+          <h1>正在准备工作区</h1>
+          <p id="boot-status">正在加载界面资源，请稍候…</p>
+          <div class="boot-spinner"></div>
+          <button class="boot-reload" type="button" onclick="location.reload()">
+            重新加载
+          </button>
+        </div>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var splash = document.getElementById("boot-splash");
+        var status = document.getElementById("boot-status");
+        var booted = false;
+        var retryKey = "cargo-sweep.boot-retry";
+
+        window.__cargoSweepBooted = false;
+        window.__cargoSweepMarkReady = function () {
+          booted = true;
+          window.__cargoSweepBooted = true;
+          try {
+            sessionStorage.removeItem(retryKey);
+          } catch (error) {
+            /* Storage is optional. */
+          }
+        };
+        window.__cargoSweepBootError = function (message) {
+          if (booted || !splash) {
+            return;
+          }
+          splash.classList.add("failed");
+          if (status) {
+            status.textContent = message || "界面加载失败，请重新加载。";
+          }
+        };
+        if (status) {
+          status.textContent = "正在加载界面资源，请稍候…";
+        }
+        window.setTimeout(function () {
+          if (booted) {
+            return;
+          }
+          var alreadyRetried = false;
+          try {
+            alreadyRetried = sessionStorage.getItem(retryKey) === "1";
+            if (!alreadyRetried) {
+              sessionStorage.setItem(retryKey, "1");
+            }
+          } catch (error) {
+            /* Retry once even if storage is unavailable. */
+          }
+          if (!alreadyRetried) {
+            if (status) {
+              status.textContent = "加载时间较长，正在重新尝试…";
+            }
+            window.setTimeout(function () {
+              location.reload();
+            }, 350);
+            return;
+          }
+          window.__cargoSweepBootError(
+            "界面加载失败，请点击重新加载；如果仍然失败，请重新启动应用。",
+          );
+        }, 8000);
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
