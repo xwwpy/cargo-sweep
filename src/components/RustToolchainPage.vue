@@ -83,6 +83,41 @@ const emit = defineEmits<{
   "rust-state": [installed: boolean];
 }>();
 
+type ToolchainSection =
+  | "overview"
+  | "installed"
+  | "environment"
+  | "source"
+  | "commands";
+
+const TOOLCHAIN_SECTION_KEY = "cargo-sweep.rust-section";
+const toolchainSections: Array<{ id: ToolchainSection; label: string }> = [
+  { id: "overview", label: "概览" },
+  { id: "installed", label: "已安装" },
+  { id: "environment", label: "环境与存储" },
+  { id: "source", label: "Rustup 源" },
+  { id: "commands", label: "命令" },
+];
+
+function readToolchainSection(): ToolchainSection {
+  try {
+    const stored = sessionStorage.getItem(TOOLCHAIN_SECTION_KEY);
+    if (toolchainSections.some((section) => section.id === stored)) {
+      return stored as ToolchainSection;
+    }
+  } catch {
+    // Fall back to the overview section.
+  }
+  return "overview";
+}
+
+const activeToolchainSection = ref<ToolchainSection>(readToolchainSection());
+const toolchainSectionTitle = computed(
+  () =>
+    toolchainSections.find(
+      (section) => section.id === activeToolchainSection.value,
+    )?.label ?? "版本与工具链",
+);
 const cachedLatest = getCachedRustLatest();
 const status = ref<RustToolchainStatus | null>(null);
 const latest = ref<LatestRustVersions | null>(cachedLatest);
@@ -793,6 +828,20 @@ async function loadRustupSource() {
   } catch (reason) {
     rustupSourceError.value = errorMessage(reason);
   }
+}
+
+function selectToolchainSection(section: ToolchainSection) {
+  activeToolchainSection.value = section;
+  try {
+    sessionStorage.setItem(TOOLCHAIN_SECTION_KEY, section);
+  } catch {
+    // Section selection remains active for the current mount.
+  }
+  void nextTick(() => {
+    document
+      .querySelector<HTMLElement>(".main-content")
+      ?.scrollTo({ top: 0, behavior: "smooth" });
+  });
 }
 
 function selectSource(sourceId: string) {
@@ -1506,7 +1555,13 @@ onUnmounted(() => {
     <div v-else class="embedded-toolbar">
       <div>
         <span class="section-kicker">TOOLCHAINS</span>
-        <h2>版本与工具链</h2>
+        <h2>
+          {{
+            activeToolchainSection === "overview"
+              ? "版本与工具链"
+              : toolchainSectionTitle
+          }}
+        </h2>
       </div>
       <el-button class="refresh-button" :loading="loading || latestLoading" @click="reloadAll">
         <el-icon v-if="!loading && !latestLoading"><Refresh /></el-icon>
@@ -1619,6 +1674,22 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <nav class="toolchain-section-nav" aria-label="Rust 环境分区">
+        <button
+          v-for="section in toolchainSections"
+          :key="section.id"
+          type="button"
+          :class="{ active: activeToolchainSection === section.id }"
+          :aria-current="
+            activeToolchainSection === section.id ? 'page' : undefined
+          "
+          @click="selectToolchainSection(section.id)"
+        >
+          {{ section.label }}
+        </button>
+      </nav>
+
+      <template v-if="activeToolchainSection === 'overview'">
       <div v-if="!status.installed" class="setup-banner">
         <div class="setup-icon"><el-icon><InfoFilled /></el-icon></div>
         <div class="setup-copy">
@@ -1714,6 +1785,9 @@ onUnmounted(() => {
         <button type="button" @click="retryLatest">重试</button>
       </div>
 
+      </template>
+
+      <template v-if="activeToolchainSection === 'environment'">
       <section v-if="cargoHome" class="cargo-home-card">
         <div class="env-head">
           <div>
@@ -1804,6 +1878,9 @@ onUnmounted(() => {
         {{ cargoHomeError }}
       </div>
 
+      </template>
+
+      <template v-if="activeToolchainSection === 'source'">
       <section v-if="rustupSource" class="rustup-source-card">
         <div class="source-head">
           <div>
@@ -1965,6 +2042,9 @@ onUnmounted(() => {
         {{ rustupSourceError }}
       </div>
 
+      </template>
+
+      <template v-if="activeToolchainSection === 'overview'">
       <div class="channel-grid">
         <article
           v-for="channel in channelViews"
@@ -2077,6 +2157,9 @@ onUnmounted(() => {
         </article>
       </div>
 
+      </template>
+
+      <template v-if="activeToolchainSection === 'installed'">
       <section class="history-card">
         <div class="history-head">
           <div>
@@ -2178,6 +2261,9 @@ onUnmounted(() => {
         </div>
       </section>
 
+      </template>
+
+      <template v-if="activeToolchainSection === 'commands'">
       <section v-if="manualCommands.length > 0" class="manual-commands">
         <div class="manual-commands-head">
           <div>
@@ -2207,6 +2293,8 @@ onUnmounted(() => {
           </div>
         </div>
       </section>
+
+      </template>
 
       <section v-if="actionOutput" class="action-console">
         <div class="console-head">
@@ -2388,6 +2476,72 @@ onUnmounted(() => {
 
 .toolchain-page.is-embedded {
   padding-top: 2px;
+}
+
+.toolchain-section-nav {
+  display: flex;
+  gap: 3px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px;
+  margin: 6px 0 2px;
+  overflow-x: auto;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(139, 92, 246, 0.1);
+  border-radius: 12px;
+  scrollbar-width: none;
+}
+
+.toolchain-section-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.toolchain-section-nav button {
+  flex: 0 0 auto;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #7d6f92;
+  white-space: nowrap;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease;
+}
+
+.toolchain-section-nav button:hover {
+  color: #241832;
+  background: rgba(139, 92, 246, 0.06);
+}
+
+.toolchain-section-nav button.active {
+  color: var(--accent-1-deep, #be185d);
+  background: var(--accent-1-soft, #fdf2f8);
+  border-color: var(--accent-1-soft-line, rgba(236, 72, 153, 0.2));
+}
+
+html.dark .toolchain-section-nav {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(192, 132, 252, 0.12);
+}
+
+html.dark .toolchain-section-nav button {
+  color: #b9aac9;
+}
+
+html.dark .toolchain-section-nav button:hover {
+  color: #f7efff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+html.dark .toolchain-section-nav button.active {
+  color: var(--accent-1-bright);
+  background: rgba(236, 72, 153, 0.12);
+  border-color: rgba(236, 72, 153, 0.22);
 }
 
 .embedded-toolbar {

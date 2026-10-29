@@ -68,7 +68,7 @@ function handleRustState(installed: boolean) {
         <span class="env-tab-icon"><el-icon><Cpu /></el-icon></span>
         <span>
           <strong>工具链</strong>
-          <small>版本、更新与存储</small>
+          <small>版本、更新与安装</small>
         </span>
       </button>
       <button
