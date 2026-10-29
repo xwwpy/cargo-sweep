@@ -1,8 +1,9 @@
 use crate::background;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1493,10 +1494,10 @@ impl DownloadMonitor {
     fn start() -> Self {
         let meter = Arc::new(Mutex::new(DownloadMeter::default()));
         let stop = Arc::new(AtomicBool::new(false));
+        let baseline = downloaded_bytes();
         let thread_meter = Arc::clone(&meter);
         let thread_stop = Arc::clone(&stop);
         let thread = thread::spawn(move || {
-            let baseline = downloaded_bytes();
             let mut last_total = baseline;
             let mut last_time = Instant::now();
             while !thread_stop.load(Ordering::Relaxed) {
@@ -1512,7 +1513,11 @@ impl DownloadMonitor {
                 if let Ok(mut meter) = thread_meter.lock() {
                     meter.bytes = total.saturating_sub(baseline);
                     if speed > 0 {
-                        meter.speed_bps = speed;
+                        meter.speed_bps = if meter.speed_bps > 0 {
+                            (meter.speed_bps * 2 + speed) / 3
+                        } else {
+                            speed
+                        };
                     } else if elapsed.as_secs() >= 2 {
                         meter.speed_bps = 0;
                     }
@@ -1625,6 +1630,7 @@ struct RustupProgress {
     phase: String,
     message: String,
     components: Vec<TrackedComponent>,
+    component_sizes: Arc<Mutex<HashMap<String, u64>>>,
     started: Instant,
     last_progress_line: String,
     last_progress_at: Instant,
@@ -1640,11 +1646,22 @@ impl RustupProgress {
             phase: "verify".into(),
             message: "准备安装".into(),
             components: Vec::new(),
+            component_sizes: Arc::new(Mutex::new(HashMap::new())),
             started: Instant::now(),
             last_progress_line: String::new(),
             last_progress_at: Instant::now(),
             meter,
         }
+    }
+
+    fn component_total(&self, component: &TrackedComponent) -> u64 {
+        component.total_bytes.unwrap_or_else(|| {
+            self.component_sizes
+                .lock()
+                .ok()
+                .and_then(|sizes| sizes.get(&component.name).copied())
+                .unwrap_or(0)
+        })
     }
 
     fn meter_values(&self) -> DownloadMeter {
@@ -1669,12 +1686,25 @@ impl RustupProgress {
                 {
                     if let Some(component) = self
                         .components
-                        .iter_mut()
+                        .iter()
                         .rev()
                         .find(|component| component.phase == "downloading")
                     {
-                        if component.total_bytes.is_none() {
-                            component.total_bytes = remote_content_size(url);
+                        let name = component.name.clone();
+                        let sizes = Arc::clone(&self.component_sizes);
+                        let already_requested = sizes
+                            .lock()
+                            .map(|sizes| sizes.contains_key(&name))
+                            .unwrap_or(false);
+                        if !already_requested && component.total_bytes.is_none() {
+                            let url = url.to_string();
+                            thread::spawn(move || {
+                                if let Some(size) = remote_content_size(&url) {
+                                    if let Ok(mut sizes) = sizes.lock() {
+                                        sizes.insert(name, size);
+                                    }
+                                }
+                            });
                         }
                     }
                 }
@@ -1683,6 +1713,18 @@ impl RustupProgress {
         }
         if lower.starts_with("debug:") {
             return self.snapshot(None);
+        }
+        if let Some(percent) = line_percentage(&clean) {
+            if let Some(component) = self
+                .components
+                .iter_mut()
+                .rev()
+                .find(|component| component.phase == "downloading")
+            {
+                component.percent = percent;
+                let name = component.name.clone();
+                return self.snapshot(Some(format!("正在下载 {name} · {percent}%")));
+            }
         }
         if lower.contains("syncing channel updates") {
             self.phase = "verify".into();
@@ -1834,9 +1876,10 @@ impl RustupProgress {
         let mut total = 0u64;
         let mut downloaded = 0u64;
         for component in &self.components {
-            let Some(component_total) = component.total_bytes else {
+            let component_total = self.component_total(component);
+            if component_total == 0 {
                 continue;
-            };
+            }
             total = total.saturating_add(component_total);
             let component_downloaded =
                 if component.phase == "done" || component.phase == "installing" {
@@ -1879,7 +1922,7 @@ impl RustupProgress {
                 } else {
                     component.elapsed_ms
                 };
-                let total_bytes = component.total_bytes.unwrap_or(0);
+                let total_bytes = self.component_total(component);
                 let measured = meter.bytes.saturating_sub(component.start_meter_bytes);
                 let downloaded_bytes = if total_bytes > 0 {
                     if component.phase == "done" || component.phase == "installing" {
@@ -1970,9 +2013,49 @@ fn component_name(line: &str) -> String {
         .to_string()
 }
 
+fn stream_reader<R>(mut reader: R, sender: mpsc::Sender<String>) -> thread::JoinHandle<()>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut pending = Vec::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            let read = match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(_) => break,
+            };
+            for byte in &buffer[..read] {
+                if *byte == b'\r' || *byte == b'\n' {
+                    if !pending.is_empty() {
+                        let line = String::from_utf8_lossy(&pending).to_string();
+                        pending.clear();
+                        if sender.send(line).is_err() {
+                            return;
+                        }
+                    }
+                } else {
+                    pending.push(*byte);
+                }
+            }
+        }
+        if !pending.is_empty() {
+            let _ = sender.send(String::from_utf8_lossy(&pending).to_string());
+        }
+    })
+}
+
 fn line_percentage(line: &str) -> Option<u8> {
-    line.split_whitespace()
-        .find_map(|token| token.strip_suffix('%')?.parse::<u8>().ok())
+    line.split_whitespace().find_map(|token| {
+        let token =
+            token.trim_matches(|character| matches!(character, '(' | ')' | '[' | ']' | ',' | ';'));
+        let value = token.strip_suffix('%')?;
+        value
+            .parse::<f64>()
+            .ok()
+            .map(|percent| percent.round().clamp(0.0, 100.0) as u8)
+    })
 }
 
 fn run_streaming<F>(program: &str, args: &[&str], on_line: F) -> Result<(bool, String), String>
@@ -2018,22 +2101,8 @@ where
         .take()
         .ok_or_else(|| format!("无法读取 {program} 错误输出。"))?;
     let (sender, receiver) = mpsc::channel::<String>();
-    let stdout_sender = sender.clone();
-    let stdout_reader = thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if stdout_sender.send(line).is_err() {
-                break;
-            }
-        }
-    });
-    let stderr_sender = sender.clone();
-    let stderr_reader = thread::spawn(move || {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            if stderr_sender.send(line).is_err() {
-                break;
-            }
-        }
-    });
+    let stdout_reader = stream_reader(stdout, sender.clone());
+    let stderr_reader = stream_reader(stderr, sender.clone());
     drop(sender);
 
     let mut text = String::new();
@@ -2335,13 +2404,51 @@ LLVM version: 23.1.1";
     fn resolves_component_archive_size() {
         let mut progress = RustupProgress::new(Arc::new(Mutex::new(DownloadMeter::default())));
         progress.observe("info: downloading component 'rust-std'");
-        let snapshot = progress.observe(
+        progress.observe(
             "debug: downloading file url=https://static.rust-lang.org/dist/2026-10-15/rust-std-1.99.1-x86_64-pc-windows-msvc.tar.xz",
         );
-        let component = &snapshot.components[0];
-        assert_eq!(component.name, "rust-std");
-        assert!(component.total_bytes > 0);
-        assert!(!component.indeterminate);
+        let mut total_bytes = 0;
+        for _ in 0..50 {
+            let snapshot = progress.observe("");
+            total_bytes = snapshot.components[0].total_bytes;
+            if total_bytes > 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(progress.components[0].name, "rust-std");
+        assert!(total_bytes > 0);
+        assert!(!progress.snapshot(None).components[0].indeterminate);
+    }
+
+    #[test]
+    fn associates_percentage_progress_with_current_component() {
+        let mut progress = RustupProgress::new(Arc::new(Mutex::new(DownloadMeter::default())));
+        progress.observe("info: downloading component 'rustc'");
+        let snapshot = progress.observe("42%");
+        assert_eq!(snapshot.components[0].name, "rustc");
+        assert_eq!(snapshot.components[0].percent, 42);
+        assert_eq!(snapshot.line.as_deref(), Some("正在下载 rustc · 42%"));
+    }
+
+    #[test]
+    fn splits_carriage_return_progress_updates() {
+        use std::io::Cursor;
+        let (sender, receiver) = mpsc::channel();
+        let reader = stream_reader(
+            Cursor::new(b"info: downloading component 'rustc'\r42%\r77%\n".to_vec()),
+            sender,
+        );
+        reader.join().unwrap();
+        let lines: Vec<String> = receiver.try_iter().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "info: downloading component 'rustc'".to_string(),
+                "42%".to_string(),
+                "77%".to_string()
+            ]
+        );
     }
 
     #[test]
