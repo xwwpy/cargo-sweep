@@ -1,0 +1,673 @@
+/* Readability pass: the app uses very small interface labels by default.
+   These overrides establish a clear, consistent type scale on every page. */
+#app {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--app-ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#app p {
+  font-size: 12px !important;
+  line-height: 1.65 !important;
+  color: var(--app-muted);
+}
+
+#app small {
+  font-size: 10.5px !important;
+  line-height: 1.5;
+}
+
+#app code {
+  font-size: 11px !important;
+  line-height: 1.55;
+}
+
+#app h1 {
+  font-size: clamp(34px, 3.3vw, 44px);
+  line-height: 1.08;
+  letter-spacing: -1.5px;
+}
+
+#app h2 {
+  font-size: 17px;
+  line-height: 1.3;
+  letter-spacing: -0.2px;
+}
+
+#app h3,
+#app h4 {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+#app button,
+#app .el-button {
+  font-size: 12px;
+}
+
+#app .el-input__inner,
+#app .el-textarea__inner,
+#app .el-select__selected-item {
+  font-size: 12px !important;
+}
+
+#app .el-table {
+  font-size: 12.5px;
+}
+
+#app .el-table th.el-table__cell {
+  font-size: 11px;
+  color: var(--app-muted);
+}
+
+#app .el-table td.el-table__cell {
+  font-size: 12px;
+}
+
+#app .el-message {
+  font-size: 12px;
+}
+
+#app .el-dialog {
+  font-size: 12px;
+}
+
+#app .el-dialog__title {
+  font-size: 16px;
+}
+
+#app .el-message-box {
+  font-size: 12px;
+}
+
+/* Sidebar and top bar */
+#app .brand-name {
+  font-size: 16px;
+  letter-spacing: -0.3px;
+}
+
+#app .brand-kicker {
+  font-size: 9px;
+  letter-spacing: 2.1px;
+  color: #c3a9df;
+}
+
+#app .nav-title {
+  flex: 0 0 auto;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+#app .nav-hint {
+  flex: 0 1 auto;
+  max-width: 100px;
+  margin-left: auto;
+  overflow: hidden;
+  font-size: 9.5px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#app .nav-item {
+  min-height: 43px;
+}
+
+#app .section-head {
+  font-size: 11px;
+  letter-spacing: 0.5px;
+}
+
+#app .root-name {
+  font-size: 11.5px;
+}
+
+#app .root-path {
+  font-size: 10px;
+}
+
+#app .depth-note,
+#app .footer-stats,
+#app .version {
+  font-size: 10px;
+}
+
+#app .safety-card h4 {
+  font-size: 12.5px;
+}
+
+#app .safety-card p {
+  font-size: 10.5px !important;
+  line-height: 1.55 !important;
+}
+
+#app .breadcrumb {
+  font-size: 11px;
+}
+
+#app .breadcrumb strong {
+  font-size: 11.5px;
+}
+
+#app .sync-state,
+#app .version-chip {
+  font-size: 10.5px;
+}
+
+#app .theme-studio,
+#app .theme-studio button {
+  font-size: 11px;
+}
+
+#app .theme-studio-head strong {
+  font-size: 15px;
+}
+
+#app .theme-studio-kicker {
+  font-size: 8.5px;
+}
+
+#app .theme-current,
+#app .palette-heading,
+#app .palette-heading small,
+#app .palette-copy small {
+  font-size: 10px;
+}
+
+#app .palette-copy strong,
+#app .layout-modes strong {
+  font-size: 11px;
+}
+
+#app .appearance-modes button,
+#app .layout-modes button {
+  font-size: 11px;
+}
+
+#app .minimal-brand strong {
+  font-size: 15px;
+}
+
+#app .minimal-brand small {
+  font-size: 8px !important;
+}
+
+#app .minimal-nav button {
+  font-size: 12px;
+}
+
+#app .minimal-meta {
+  font-size: 10px;
+}
+
+#app .minimal-meta strong {
+  font-size: 10px;
+}
+
+#app .minimal-task-count {
+  font-size: 8px;
+}
+
+#app .minimal-scope-label {
+  font-size: 10px;
+}
+
+#app .minimal-root,
+#app .minimal-add-root {
+  font-size: 10.5px;
+}
+
+#app .minimal-root > button {
+  font-size: 9px;
+}
+
+/* Hero and target overview */
+#app .eyebrow,
+#app .section-kicker {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 1.6px;
+}
+
+#app .hero {
+  padding-top: 26px;
+}
+
+#app .hero p {
+  font-size: 13px !important;
+}
+
+#app .stat-label {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+#app .stat-primary .stat-label {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+#app .amount-value,
+#app .stat-value {
+  font-size: 40px;
+  letter-spacing: -1.8px;
+}
+
+#app .amount-unit,
+#app .stat-unit {
+  font-size: 17px;
+}
+
+#app .stat-foot,
+#app .foot-note,
+#app .foot-muted {
+  font-size: 10.5px;
+}
+
+#app .foot-chip,
+#app .stat-badge {
+  font-size: 9.5px;
+}
+
+#app .title-count {
+  min-width: 22px;
+  padding: 2px 7px;
+  font-size: 10px;
+}
+
+#app .section-heading h2 {
+  font-size: 17px;
+}
+
+#app .project-name {
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+#app .project-path {
+  font-size: 10.5px;
+}
+
+#app .size-value {
+  font-size: 16px;
+}
+
+#app .size-unit {
+  font-size: 10px;
+}
+
+#app .muted-time {
+  font-size: 11px;
+}
+
+#app .row-open,
+#app .row-delete {
+  font-size: 11px;
+}
+
+#app .table-footer,
+#app .footer-count,
+#app .footer-security {
+  font-size: 10.5px;
+}
+
+#app .empty-state h3,
+#app .scan-overlay h3 {
+  font-size: 16px;
+}
+
+#app .empty-state p,
+#app .scan-overlay p {
+  font-size: 11.5px !important;
+}
+
+#app .search-field .el-input__inner {
+  font-size: 12px !important;
+}
+
+/* Rust environment */
+#app .env-hero h1 {
+  font-size: clamp(32px, 3.1vw, 40px);
+}
+
+#app .env-hero p {
+  font-size: 13px !important;
+}
+
+#app .env-tab-title {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+#app .env-tab small {
+  font-size: 10px !important;
+}
+
+#app .current-copy h2 {
+  font-size: 22px;
+}
+
+#app .current-copy code,
+#app .current-build {
+  font-size: 10.5px;
+}
+
+#app .app-shell:not(.minimal) .env-hero p {
+  color: rgba(255, 255, 255, 0.84) !important;
+}
+
+#app .app-shell:not(.minimal) .current-copy code,
+#app .app-shell:not(.minimal) .current-build,
+#app .app-shell:not(.minimal) .current-latest > span,
+#app .app-shell:not(.minimal) .current-latest small {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+#app .app-shell:not(.minimal) .current-latest strong {
+  color: #fff;
+}
+
+#app .app-shell:not(.minimal) .current-panel .current-label {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+#app .current-label,
+#app .current-latest > span,
+#app .current-latest small {
+  font-size: 10px;
+}
+
+#app .current-latest strong {
+  font-size: 15px;
+}
+
+#app .current-latest em {
+  font-size: 10px;
+}
+
+#app .channel-label,
+#app .channel-meta,
+#app .channel-build {
+  font-size: 10.5px;
+}
+
+#app .channel-name {
+  font-size: 17px;
+}
+
+#app .channel-subtitle {
+  font-size: 11px;
+}
+
+#app .installed-name,
+#app .installed-version,
+#app .history-label,
+#app .source-current,
+#app .source-option,
+#app .source-command,
+#app .manual-command,
+#app .command-line {
+  font-size: 11px;
+}
+
+#app .source-heading h2,
+#app .history-head h2 {
+  font-size: 16px;
+}
+
+#app .source-name {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+#app .source-provider {
+  font-size: 10.5px;
+}
+
+#app .source-badge,
+#app .current-label,
+#app .select-label {
+  font-size: 9.5px;
+}
+
+#app .source-card code {
+  font-size: 10px !important;
+}
+
+#app .source-speed-button,
+#app .speed-all-button,
+#app .source-speed-result,
+#app .source-speed-all,
+#app .source-speed-test,
+#app .source-speed-name,
+#app .source-speed-value {
+  font-size: 10.5px !important;
+}
+
+#app .source-speed-list {
+  padding: 8px 10px;
+}
+
+#app .source-speed-item {
+  min-height: 28px;
+}
+
+#app .source-speed-item {
+  grid-template-columns: 120px minmax(0, 1fr) 70px;
+}
+
+#app .source-option {
+  height: 29px;
+  padding: 0 10px;
+}
+
+#app .source-current-badge {
+  padding: 5px 9px;
+  font-size: 10px;
+}
+
+#app .rustup-source-card,
+#app .cargo-home-card,
+#app .channel-card,
+#app .history-card,
+#app .source-card {
+  border-radius: 15px;
+}
+
+#app .manual-commands pre,
+#app .source-command code,
+#app .command-line code {
+  font-size: 10.5px !important;
+}
+
+/* Progress overlay (foreground operations) */
+#app .operation-progress {
+  width: min(600px, calc(100vw - 48px));
+  padding: 16px 18px;
+}
+
+#app .operation-progress-head {
+  font-size: 11px;
+}
+
+#app .operation-phase-label {
+  font-size: 10px;
+}
+
+#app .operation-phase-message {
+  font-size: 11px;
+}
+
+#app .operation-metrics > span {
+  font-size: 10px;
+}
+
+#app .operation-metrics strong {
+  font-size: 12px;
+}
+
+#app .operation-component-name {
+  font-size: 10.5px;
+}
+
+#app .operation-component-phase,
+#app .operation-component-meta {
+  font-size: 9.5px;
+}
+
+#app .operation-live-head,
+#app .operation-live-output pre {
+  font-size: 10px;
+}
+
+/* Task center */
+#app .tasks-hero h1 {
+  font-size: clamp(34px, 3vw, 42px);
+}
+
+#app .tasks-kicker {
+  font-size: 10px;
+}
+
+#app .tasks-summary {
+  font-size: 11px;
+}
+
+#app .tasks-summary-number {
+  font-size: 28px;
+}
+
+#app .task-kind {
+  font-size: 9.5px;
+  letter-spacing: 1.1px;
+}
+
+#app .task-heading h2 {
+  font-size: 15px;
+}
+
+#app .task-heading p,
+#app .task-message {
+  font-size: 11px !important;
+}
+
+#app .task-status {
+  padding: 4px 8px;
+  font-size: 10px;
+}
+
+#app .task-progress-row > span {
+  font-size: 10.5px;
+}
+
+#app .task-component > span,
+#app .task-component small {
+  font-size: 10px;
+}
+
+#app .task-output summary,
+#app .task-output pre {
+  font-size: 10px !important;
+}
+
+#app .task-action {
+  font-size: 10.5px;
+}
+
+#app .task-clean-message {
+  font-size: 10px;
+}
+
+#app .tasks-empty {
+  min-height: 300px;
+}
+
+#app .tasks-empty h2 {
+  font-size: 18px;
+}
+
+#app .tasks-empty p {
+  font-size: 11.5px !important;
+}
+
+/* Task dock */
+#app .task-dock {
+  width: min(390px, calc(100vw - 48px));
+  padding: 12px;
+}
+
+#app .task-dock-head {
+  font-size: 10px;
+}
+
+#app .task-dock-head strong {
+  font-size: 10.5px;
+}
+
+#app .task-dock-title {
+  font-size: 12px;
+}
+
+#app .task-dock-message {
+  font-size: 10.5px;
+}
+
+#app .task-dock-open {
+  padding: 6px 9px;
+  font-size: 10px;
+}
+
+/* Improve muted contrast in light and dark modes. */
+#app {
+  --app-muted: #695b7c;
+  --app-subtle: #8a7c9b;
+}
+
+html.dark #app {
+  --app-muted: #c4b5d6;
+  --app-subtle: #a99bb8;
+}
+
+#app .stat-foot,
+#app .foot-muted,
+#app .muted-time,
+#app .project-path,
+#app .source-provider,
+#app .current-build,
+#app .current-label,
+#app .channel-meta,
+#app .channel-label,
+#app .installed-version,
+#app .task-heading p,
+#app .task-message,
+#app .operation-phase-message,
+#app .theme-current,
+#app .palette-copy small,
+#app .layout-modes small {
+  color: var(--app-muted);
+}
+
+html.dark #app .stat-foot,
+html.dark #app .project-path,
+html.dark #app .source-provider,
+html.dark #app .current-build,
+html.dark #app .current-label,
+html.dark #app .channel-meta,
+html.dark #app .task-heading p,
+html.dark #app .task-message {
+  color: var(--app-muted);
+}
+
+@media (max-width: 1100px) {
+  #app .amount-value,
+  #app .stat-value {
+    font-size: 34px;
+  }
+
+  #app .hero h1,
+  #app .env-hero h1 {
+    font-size: 32px;
+  }
+}

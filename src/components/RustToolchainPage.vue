@@ -5,7 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { formatBytes } from "../lib/format";
 import { operationBusy as busy } from "../composables/useOperationBusy";
 import {
-  hasRunningToolchainTask,
+  hasActiveResource,
   startTask,
 } from "../composables/useTasks";
 import {
@@ -974,18 +974,36 @@ async function runOperation(
   }
 }
 
+function toolchainResource(name: string): string {
+  if (name.startsWith("stable")) {
+    return "toolchain-channel:stable";
+  }
+  if (name.startsWith("nightly")) {
+    return "toolchain-channel:nightly";
+  }
+  if (name.startsWith("beta")) {
+    return "toolchain-channel:beta";
+  }
+  return `toolchain:${name}`;
+}
+
 interface BackgroundToolchainOptions {
   kind: "toolchain" | "rustup" | "uninstall";
   title: string;
   detail: string;
   successMessage: string;
+  resourceKey: string;
   run: (taskId: string) => Promise<RustToolchainOperationResult>;
   afterFinish?: (result: RustToolchainOperationResult) => void;
 }
 
 function runBackgroundToolchain(options: BackgroundToolchainOptions) {
-  if (busy.value || hasRunningToolchainTask.value) {
-    ElMessage.info("已有工具链任务在后台运行，请等待完成或前往任务中心取消");
+  if (busy.value) {
+    ElMessage.info("当前页面还有操作在进行，请稍候");
+    return;
+  }
+  if (hasActiveResource(options.resourceKey)) {
+    ElMessage.info("该工具链已有任务在后台运行，请等待完成或前往任务中心取消");
     return;
   }
   startTask({
@@ -993,6 +1011,7 @@ function runBackgroundToolchain(options: BackgroundToolchainOptions) {
     title: options.title,
     detail: options.detail,
     page: "rust",
+    resourceKey: options.resourceKey,
     run: options.run,
     successMessage: options.successMessage,
     onFinished: (result, error) => {
@@ -1051,6 +1070,7 @@ async function installRustupAction() {
     title: "安装 rustup",
     detail: "下载并初始化 Rust 工具链管理器",
     successMessage: "rustup 已安装",
+    resourceKey: "rustup",
     run: (taskId) => installRustup(taskId),
   });
 }
@@ -1235,6 +1255,7 @@ async function removeToolchain(toolchain: InstalledRustToolchain) {
     title: `删除 ${toolchain.name}`,
     detail: "移除工具链文件，可在任务中心取消",
     successMessage: "工具链已删除",
+    resourceKey: toolchainResource(toolchain.name),
     run: (taskId) => uninstallRustToolchain(taskId, toolchain.name),
   });
 }
@@ -1246,13 +1267,18 @@ async function installChannel(view: ChannelView) {
     title: `安装 ${view.label} 工具链`,
     detail: "下载组件并安装到 RUSTUP_HOME",
     successMessage: `${view.label} 工具链已安装`,
+    resourceKey: toolchainResource(view.key),
     run: (taskId) => installRustToolchain(taskId, view.key, setDefault),
   });
 }
 
 async function updateChannel(view: ChannelView) {
-  if (busy.value || hasRunningToolchainTask.value) {
-    ElMessage.info("已有工具链任务在后台运行，请等待完成或前往任务中心取消");
+  if (busy.value) {
+    ElMessage.info("当前页面还有操作在进行，请稍候");
+    return;
+  }
+  if (hasActiveResource(toolchainResource(view.key))) {
+    ElMessage.info("该工具链已有任务在后台运行，请等待完成或前往任务中心取消");
     return;
   }
   let shouldStart = false;
@@ -1300,6 +1326,7 @@ async function updateChannel(view: ChannelView) {
     title: `更新 ${view.label} 工具链`,
     detail: "后台下载并安装缺失的组件",
     successMessage: `${view.label} 已更新到最新版本`,
+    resourceKey: toolchainResource(view.key),
     run: (taskId) => updateRustToolchain(taskId, view.toolchain ?? view.key),
     afterFinish: (result) => {
       void verifyUpdatedChannel(view, result);
@@ -1372,6 +1399,7 @@ async function installHistory() {
     title: `安装 ${target}`,
     detail: "安装历史版本工具链",
     successMessage: `${target} 工具链已安装`,
+    resourceKey: toolchainResource(target),
     run: (taskId) => installRustToolchain(taskId, target, false),
   });
 }
@@ -1387,6 +1415,7 @@ async function installCustom() {
     title: `安装 ${target}`,
     detail: "安装自定义版本工具链",
     successMessage: `${target} 工具链已安装`,
+    resourceKey: toolchainResource(target),
     run: (taskId) => installRustToolchain(taskId, target, false),
   });
 }

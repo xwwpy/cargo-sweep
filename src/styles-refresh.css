@@ -2066,8 +2066,43 @@ html.dark #app .minimal .current-latest strong {
   font-size: 11px;
 }
 
-.task-dock .el-progress {
-  margin-top: 2px;
+.task-dock-track {
+  height: 5px;
+  margin-top: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent-1) 12%, transparent);
+  border-radius: 99px;
+}
+
+.task-dock-track > span {
+  display: block;
+  height: 100%;
+  background: var(--primary-gradient);
+  border-radius: inherit;
+  transition: width 260ms ease;
+}
+
+.task-dock-track.indeterminate > span {
+  width: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-1) 22%,
+    var(--accent-2) 48%,
+    var(--accent-1) 74%,
+    transparent 100%
+  );
+  background-size: 220% 100%;
+  animation: task-dock-flow 1.25s linear infinite;
+}
+
+@keyframes task-dock-flow {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
 }
 
 .task-dock-enter-active,

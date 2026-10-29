@@ -149,7 +149,7 @@ async fn delete_targets(
                         TaskProgressEvent::simple(
                             progress_task_id.clone(),
                             percent,
-                            format!("正在清理 {name}"),
+                            format!("正在清理 {}/{}：{name}", index + 1, total),
                             "delete",
                         ),
                     );

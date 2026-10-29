@@ -9,6 +9,7 @@ import "./styles.css";
 import App from "./App.vue";
 import "./theme-dark.css";
 import "./styles-refresh.css";
+import "./styles-clarity.css";
 
 function describeError(error: unknown): string {
   if (error instanceof Error) {

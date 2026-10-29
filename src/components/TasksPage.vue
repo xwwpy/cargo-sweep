@@ -83,6 +83,17 @@ function componentPhaseLabel(phase: string): string {
   }
 }
 
+function progressLabel(task: BackgroundTask): string {
+  if (task.progressMode === "indeterminate") {
+    return isActive(task)
+      ? task.status === "cancelling"
+        ? "取消中"
+        : "处理中"
+      : statusLabel(task);
+  }
+  return `${task.percent}%`;
+}
+
 function elapsedLabel(task: BackgroundTask): string {
   const end = task.finishedAt ?? now.value;
   const seconds = Math.max(0, Math.round((end - task.startedAt) / 1000));
@@ -189,15 +200,25 @@ function isActive(task: BackgroundTask): boolean {
         </div>
 
         <div class="task-progress-row">
-          <el-progress
-            :percentage="task.percent"
-            :show-text="false"
-            :indeterminate="task.status === 'running' && task.percent === 0"
-            :duration="1.8"
-            :stroke-width="6"
-            :color="task.status === 'failed' ? '#dc2626' : undefined"
-          />
-          <span>{{ task.percent }}%</span>
+          <div
+            class="task-progress-track"
+            :class="{
+              indeterminate:
+                task.progressMode === 'indeterminate' &&
+                task.status === 'running',
+              failed: task.status === 'failed',
+            }"
+          >
+            <span
+              :style="{
+                width:
+                  task.progressMode === 'determinate'
+                    ? `${task.percent}%`
+                    : '100%',
+              }"
+            />
+          </div>
+          <span class="task-progress-value">{{ progressLabel(task) }}</span>
           <span>{{ elapsedLabel(task) }}</span>
         </div>
         <p class="task-message">{{ task.message }}</p>
@@ -483,15 +504,61 @@ function isActive(task: BackgroundTask): boolean {
   margin-top: 11px;
 }
 
-.task-progress-row :deep(.el-progress) {
+.task-progress-track {
   flex: 1;
+  height: 7px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent-1) 12%, transparent);
+  border-radius: 99px;
+}
+
+.task-progress-track > span {
+  display: block;
+  height: 100%;
+  background: var(--primary-gradient);
+  border-radius: inherit;
+  transition: width 260ms ease;
+}
+
+.task-progress-track.indeterminate > span {
+  width: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-1) 22%,
+    var(--accent-2) 48%,
+    var(--accent-1) 74%,
+    transparent 100%
+  );
+  background-size: 220% 100%;
+  animation: task-progress-flow 1.25s linear infinite;
+}
+
+.task-progress-track.failed > span {
+  background: #dc2626;
 }
 
 .task-progress-row > span {
   flex: 0 0 auto;
-  font-size: 8px;
+  font-size: 10.5px;
   color: var(--app-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.task-progress-value {
+  min-width: 40px;
+  color: var(--accent-1) !important;
+  font-weight: 650;
+  text-align: right;
+}
+
+@keyframes task-progress-flow {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
 }
 
 .task-message {

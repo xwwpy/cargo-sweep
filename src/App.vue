@@ -920,22 +920,37 @@ function uniqueRoots(list: string[]): string[] {
           <span class="task-dock-head">
             <i class="task-dock-dot" />
             {{ activeTasks.length }} 个后台任务
-            <strong>{{ activeTasks[0].percent }}%</strong>
+            <strong>
+              {{
+                activeTasks[0].progressMode === "determinate"
+                  ? `${activeTasks[0].percent}%`
+                  : activeTasks[0].status === "cancelling"
+                    ? "取消中"
+                    : "处理中"
+              }}
+            </strong>
           </span>
           <span class="task-dock-title">{{ activeTasks[0].title }}</span>
           <span class="task-dock-message">
             {{ activeTasks[0].message }}
           </span>
-          <el-progress
-            :percentage="activeTasks[0].percent"
-            :show-text="false"
-            :stroke-width="4"
-            :indeterminate="
-              activeTasks[0].percent === 0 &&
-              activeTasks[0].status !== 'cancelling'
-            "
-            :duration="1.8"
-          />
+          <div
+            class="task-dock-track"
+            :class="{
+              indeterminate:
+                activeTasks[0].progressMode === 'indeterminate' &&
+                activeTasks[0].status === 'running',
+            }"
+          >
+            <span
+              :style="{
+                width:
+                  activeTasks[0].progressMode === 'determinate'
+                    ? `${activeTasks[0].percent}%`
+                    : '100%',
+              }"
+            />
+          </div>
         </button>
         <button
           type="button"

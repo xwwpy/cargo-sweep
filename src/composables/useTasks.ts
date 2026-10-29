@@ -20,6 +20,7 @@ export type TaskStatus =
   | "failed"
   | "cancelled";
 export type TaskPage = "targets" | "rust" | "tasks";
+export type ProgressMode = "determinate" | "indeterminate";
 
 export interface BackgroundTask {
   id: string;
@@ -28,6 +29,8 @@ export interface BackgroundTask {
   detail: string;
   page: TaskPage;
   status: TaskStatus;
+  progressMode: ProgressMode;
+  resourceKey: string;
   percent: number;
   message: string;
   phase: string;
@@ -49,6 +52,8 @@ interface StartTaskOptions<T> {
   title: string;
   detail?: string;
   page?: TaskPage;
+  progressMode?: ProgressMode;
+  resourceKey?: string;
   run: (taskId: string) => Promise<T>;
   onFinished?: (result: T | null, error: unknown) => void;
   successMessage?: string;
@@ -66,18 +71,13 @@ export const activeTasks = computed(() =>
 
 export const activeTaskCount = computed(() => activeTasks.value.length);
 
-export const hasRunningToolchainTask = computed(() =>
-  activeTasks.value.some(
-    (task) =>
-      task.kind === "toolchain" ||
-      task.kind === "rustup" ||
-      task.kind === "uninstall",
-  ),
-);
-
 export const hasRunningDeleteTask = computed(() =>
   activeTasks.value.some((task) => task.kind === "delete"),
 );
+
+export function hasActiveResource(resourceKey: string): boolean {
+  return activeTasks.value.some((task) => task.resourceKey === resourceKey);
+}
 
 function createId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -91,7 +91,9 @@ function findTask(taskId: string): BackgroundTask | undefined {
 }
 
 function applyProgress(task: BackgroundTask, payload: TaskProgressEvent) {
-  task.percent = Math.max(0, Math.min(100, payload.percent));
+  if (task.progressMode === "determinate") {
+    task.percent = Math.max(0, Math.min(100, payload.percent));
+  }
   if (payload.message) {
     task.message = payload.message;
   }
@@ -131,6 +133,10 @@ export function startTask<T>(options: StartTaskOptions<T>): string {
     detail: options.detail ?? "",
     page: options.page ?? "tasks",
     status: "running",
+    progressMode:
+      options.progressMode ??
+      (options.kind === "toolchain" ? "determinate" : "indeterminate"),
+    resourceKey: options.resourceKey ?? options.kind,
     percent: 0,
     message: "任务已创建",
     phase: "queued",
