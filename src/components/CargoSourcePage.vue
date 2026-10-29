@@ -10,6 +10,7 @@ import {
   Link,
   Plus,
   Refresh,
+  Timer,
   WarningFilled,
 } from "@element-plus/icons-vue";
 import {
@@ -17,9 +18,10 @@ import {
   detectCargoSource,
   errorMessage,
   openFolder,
+  testSourceSpeed,
 } from "../api";
-import { cleanPath } from "../lib/format";
-import type { CargoSourceStatus } from "../types";
+import { cleanPath, formatBytes } from "../lib/format";
+import type { CargoSourceStatus, SourceSpeedResult } from "../types";
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), {
   embedded: false,
@@ -98,6 +100,10 @@ const customSources = ref<SourceOption[]>([]);
 const customName = ref("");
 const customUrl = ref("");
 const lastBackup = ref<string | null>(null);
+const speedStates = ref<
+  Record<string, { testing: boolean; result: SourceSpeedResult | null }>
+>({});
+const testingAll = ref(false);
 
 const allSources = computed(() => [...builtinSources, ...customSources.value]);
 const selectedSource = computed(
@@ -142,6 +148,67 @@ function sameUrl(left: string, right: string): boolean {
 
 function isCurrent(source: SourceOption): boolean {
   return status.value !== null && sameUrl(source.url, status.value.currentIndex);
+}
+
+function cargoSpeedUrl(source: SourceOption): string {
+  const raw = source.url.trim().replace(/^git\+/, "");
+  const sparse = raw.replace(/^sparse\+/, "");
+  const base = sparse.endsWith("/") ? sparse : `${sparse}/`;
+  return raw.startsWith("sparse+") ? `${base}se/rd/serde` : `${base}config.json`;
+}
+
+function speedLabel(sourceId: string): string {
+  const state = speedStates.value[sourceId];
+  if (!state) {
+    return "";
+  }
+  if (state.testing) {
+    return "测速中…";
+  }
+  if (!state.result) {
+    return "";
+  }
+  if (!state.result.ok) {
+    return "测速失败";
+  }
+  return `${state.result.latencyMs}ms · ${formatBytes(state.result.speedBps)}/s`;
+}
+
+async function testCargoSource(source: SourceOption): Promise<void> {
+  if (speedStates.value[source.id]?.testing) {
+    return;
+  }
+  speedStates.value[source.id] = { testing: true, result: null };
+  try {
+    const result = await testSourceSpeed(cargoSpeedUrl(source), 1024 * 1024);
+    speedStates.value[source.id] = { testing: false, result };
+  } catch (reason) {
+    speedStates.value[source.id] = {
+      testing: false,
+      result: {
+        url: source.url,
+        ok: false,
+        status: null,
+        latencyMs: 0,
+        durationMs: 0,
+        bytes: 0,
+        speedBps: 0,
+        error: errorMessage(reason),
+      },
+    };
+  }
+}
+
+async function testAllSources(): Promise<void> {
+  if (testingAll.value) {
+    return;
+  }
+  testingAll.value = true;
+  try {
+    await Promise.all(allSources.value.map((source) => testCargoSource(source)));
+  } finally {
+    testingAll.value = false;
+  }
 }
 
 function loadCustomSources() {
@@ -377,6 +444,15 @@ onMounted(() => {
           <span class="section-kicker">MIRRORS</span>
           <h2>推荐镜像</h2>
         </div>
+        <button
+          type="button"
+          class="speed-all-button"
+          :disabled="testingAll"
+          @click="testAllSources"
+        >
+          <el-icon :class="{ spinning: testingAll }"><Timer /></el-icon>
+          {{ testingAll ? "全部测速中…" : "全部测速" }}
+        </button>
       </div>
 
       <div class="source-grid">
@@ -404,6 +480,31 @@ onMounted(() => {
           <div class="source-provider">{{ source.provider }}</div>
           <p>{{ source.description }}</p>
           <code>{{ source.url }}</code>
+          <div class="source-speed-line" @click.stop>
+            <button
+              type="button"
+              class="source-speed-button"
+              :disabled="speedStates[source.id]?.testing"
+              @click.stop="testCargoSource(source)"
+            >
+              <el-icon
+                :class="{ spinning: speedStates[source.id]?.testing }"
+              >
+                <Timer />
+              </el-icon>
+              {{ speedStates[source.id]?.testing ? "测速中" : "测速" }}
+            </button>
+            <span
+              v-if="speedLabel(source.id)"
+              class="source-speed-result"
+              :class="{
+                failed: speedStates[source.id]?.result?.error,
+              }"
+              :title="speedStates[source.id]?.result?.error ?? ''"
+            >
+              {{ speedLabel(source.id) }}
+            </span>
+          </div>
           <div class="card-footer">
             <span v-if="isCurrent(source)" class="current-label">
               <el-icon><Check /></el-icon>
@@ -908,6 +1009,28 @@ onMounted(() => {
   color: #344054;
 }
 
+.speed-all-button {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  padding: 6px 9px;
+  font-size: 8.5px;
+  color: #0f766e;
+  cursor: pointer;
+  background: #f0fdfa;
+  border: 1px solid #d1f5ec;
+  border-radius: 8px;
+}
+
+.speed-all-button:hover:not(:disabled) {
+  background: #e4fbf5;
+}
+
+.speed-all-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .source-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -993,6 +1116,60 @@ onMounted(() => {
   font-size: 9.5px;
   line-height: 1.55;
   color: #667085;
+}
+
+.source-speed-line {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-height: 21px;
+  margin: 3px 0 7px;
+  cursor: default;
+}
+
+.source-speed-button {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  align-items: center;
+  padding: 3px 6px;
+  font-size: 7.5px;
+  color: #0f766e;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid #d1f5ec;
+  border-radius: 6px;
+}
+
+.source-speed-button:hover:not(:disabled) {
+  background: #f0fdfa;
+}
+
+.source-speed-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.source-speed-result {
+  overflow: hidden;
+  font-size: 7.5px;
+  color: #0f766e;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-speed-result.failed {
+  color: #b42318;
+}
+
+.spinning {
+  animation: source-spin 1s linear infinite;
+}
+
+@keyframes source-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .source-card code {

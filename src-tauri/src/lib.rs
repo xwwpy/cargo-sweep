@@ -4,6 +4,7 @@ mod cargo_source;
 mod rust_toolchain;
 mod rustup_source;
 mod scanner;
+mod speed_test;
 
 use background::{CleanupReport, TaskProgressEvent};
 use cargo_home::{CargoHomeMigrationResult, CargoHomeStatus};
@@ -157,6 +158,16 @@ fn cancel_background_task(task_id: String) -> bool {
 #[tauri::command]
 fn cleanup_task_artifacts(started_at_ms: u64, kind: String) -> CleanupReport {
     background::cleanup_artifacts(started_at_ms, &kind)
+}
+
+#[tauri::command]
+async fn test_source_speed(
+    url: String,
+    max_bytes: Option<u64>,
+) -> Result<speed_test::SourceSpeedResult, String> {
+    tauri::async_runtime::spawn_blocking(move || speed_test::test_source(&url, max_bytes))
+        .await
+        .map_err(|error| format!("测速任务异常退出：{error}"))
 }
 
 #[tauri::command]
@@ -447,6 +458,7 @@ pub fn run() {
             delete_targets,
             cancel_background_task,
             cleanup_task_artifacts,
+            test_source_speed,
             default_scan_roots,
             cargo_home_status,
             rustup_source_status,

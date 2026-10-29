@@ -42,6 +42,17 @@ export interface TaskProgressEvent extends ToolchainProgress {
   taskId: string;
 }
 
+export interface SourceSpeedResult {
+  url: string;
+  ok: boolean;
+  status: number | null;
+  latencyMs: number;
+  durationMs: number;
+  bytes: number;
+  speedBps: number;
+  error: string | null;
+}
+
 export interface CleanupReport {
   removedFiles: number;
   freedBytes: number;

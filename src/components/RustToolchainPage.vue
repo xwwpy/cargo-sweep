@@ -18,6 +18,7 @@ import {
   InfoFilled,
   Refresh,
   Switch,
+  Timer,
   WarningFilled,
 } from "@element-plus/icons-vue";
 import {
@@ -36,6 +37,7 @@ import {
   setDefaultRustToolchain,
   setHomePath,
   setRustupPath,
+  testSourceSpeed,
   uninstallRustToolchain,
   updateRustToolchain,
 } from "../api";
@@ -49,6 +51,7 @@ import type {
   RustToolchainStatus,
   RustupSourceStatus,
   ComponentProgress,
+  SourceSpeedResult,
   ToolchainProgress,
 } from "../types";
 
@@ -95,6 +98,10 @@ const rustupSourceError = ref<string | null>(null);
 const selectedSourceId = ref("official");
 const customDistServer = ref("");
 const customUpdateRoot = ref("");
+const rustupSpeedStates = ref<
+  Record<string, { testing: boolean; result: SourceSpeedResult | null }>
+>({});
+const testingRustupSources = ref(false);
 const cargoHomeDialog = ref(false);
 const cargoHomeTarget = ref("");
 const createCargoLink = ref(true);
@@ -359,6 +366,7 @@ const rustupInstallCommand = computed(() =>
     ? "winget install --id Rustlang.Rustup -e --silent --accept-package-agreements --accept-source-agreements"
     : "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
 );
+const rustupMirrors = computed(() => rustupSource.value?.mirrors ?? []);
 const selectedMirror = computed(() =>
   rustupSource.value?.mirrors.find(
     (mirror) => mirror.id === selectedSourceId.value,
@@ -780,6 +788,79 @@ function selectSource(sourceId: string) {
   if (sourceId === "custom" && rustupSource.value) {
     customDistServer.value = rustupSource.value.distServer;
     customUpdateRoot.value = rustupSource.value.updateRoot;
+  }
+}
+
+function rustupSpeedUrl(distServer: string): string {
+  return `${distServer.replace(/\/+$/, "")}/dist/channel-rust-stable.toml`;
+}
+
+function rustupSpeedLabel(sourceId: string): string {
+  const state = rustupSpeedStates.value[sourceId];
+  if (!state) {
+    return "";
+  }
+  if (state.testing) {
+    return "测速中…";
+  }
+  if (!state.result) {
+    return "";
+  }
+  if (!state.result.ok) {
+    return "测速失败";
+  }
+  return `${state.result.latencyMs}ms · ${formatBytes(state.result.speedBps)}/s`;
+}
+
+async function testRustupSource(
+  sourceId: string,
+  distServer: string,
+): Promise<void> {
+  if (rustupSpeedStates.value[sourceId]?.testing) {
+    return;
+  }
+  rustupSpeedStates.value[sourceId] = { testing: true, result: null };
+  try {
+    const result = await testSourceSpeed(
+      rustupSpeedUrl(distServer),
+      2 * 1024 * 1024,
+    );
+    rustupSpeedStates.value[sourceId] = { testing: false, result };
+  } catch (reason) {
+    rustupSpeedStates.value[sourceId] = {
+      testing: false,
+      result: {
+        url: rustupSpeedUrl(distServer),
+        ok: false,
+        status: null,
+        latencyMs: 0,
+        durationMs: 0,
+        bytes: 0,
+        speedBps: 0,
+        error: errorMessage(reason),
+      },
+    };
+  }
+}
+
+async function testAllRustupSources(): Promise<void> {
+  const source = rustupSource.value;
+  if (testingRustupSources.value || !source) {
+    return;
+  }
+  testingRustupSources.value = true;
+  try {
+    const tasks = source.mirrors.map((mirror) =>
+      testRustupSource(mirror.id, mirror.distServer),
+    );
+    if (customDistServer.value.trim()) {
+      tasks.push(
+        testRustupSource("custom", customDistServer.value.trim()),
+      );
+    }
+    await Promise.all(tasks);
+  } finally {
+    testingRustupSources.value = false;
   }
 }
 
@@ -1682,9 +1763,22 @@ onUnmounted(() => {
             <h2>Rustup 下载源</h2>
             <p>影响 rustup 工具链和 rustup 自身的下载。</p>
           </div>
-          <span class="source-current-badge">
-            {{ rustupSource.currentName }}
-          </span>
+          <div class="source-head-actions">
+            <button
+              type="button"
+              class="source-speed-all"
+              :disabled="testingRustupSources"
+              @click="testAllRustupSources"
+            >
+              <el-icon :class="{ spinning: testingRustupSources }">
+                <Timer />
+              </el-icon>
+              {{ testingRustupSources ? "全部测速中…" : "全部测速" }}
+            </button>
+            <span class="source-current-badge">
+              {{ rustupSource.currentName }}
+            </span>
+          </div>
         </div>
 
         <div class="source-current">
@@ -1696,7 +1790,7 @@ onUnmounted(() => {
 
         <div class="source-options">
           <button
-            v-for="mirror in rustupSource.mirrors"
+            v-for="mirror in rustupMirrors"
             :key="mirror.id"
             type="button"
             class="source-option"
@@ -1728,6 +1822,47 @@ onUnmounted(() => {
             placeholder="RUSTUP_UPDATE_ROOT，例如 https://rsproxy.cn/rustup"
             :disabled="Boolean(busy)"
           />
+        </div>
+
+        <div class="source-speed-list">
+          <div
+            v-for="mirror in rustupMirrors"
+            :key="`speed-${mirror.id}`"
+            class="source-speed-item"
+          >
+            <span class="source-speed-name">{{ mirror.name }}</span>
+            <span class="source-speed-value" :class="{ failed: rustupSpeedStates[mirror.id]?.result?.error }">
+              {{ rustupSpeedLabel(mirror.id) || "尚未测速" }}
+            </span>
+            <button
+              type="button"
+              class="source-speed-test"
+              :disabled="rustupSpeedStates[mirror.id]?.testing"
+              @click="testRustupSource(mirror.id, mirror.distServer)"
+            >
+              <el-icon :class="{ spinning: rustupSpeedStates[mirror.id]?.testing }">
+                <Timer />
+              </el-icon>
+              {{ rustupSpeedStates[mirror.id]?.testing ? "测速中" : "测速" }}
+            </button>
+          </div>
+          <div class="source-speed-item custom">
+            <span class="source-speed-name">自定义源</span>
+            <span class="source-speed-value" :class="{ failed: rustupSpeedStates.custom?.result?.error }">
+              {{ rustupSpeedLabel("custom") || (customDistServer ? "尚未测速" : "填写地址后可测速") }}
+            </span>
+            <button
+              type="button"
+              class="source-speed-test"
+              :disabled="!customDistServer.trim() || rustupSpeedStates.custom?.testing"
+              @click="testRustupSource('custom', customDistServer)"
+            >
+              <el-icon :class="{ spinning: rustupSpeedStates.custom?.testing }">
+                <Timer />
+              </el-icon>
+              {{ rustupSpeedStates.custom?.testing ? "测速中" : "测速" }}
+            </button>
+          </div>
         </div>
 
         <div class="source-preview">
@@ -3194,6 +3329,98 @@ onUnmounted(() => {
   background: #ecfdf5;
   border: 1px solid #c8f1e7;
   border-radius: 999px;
+}
+
+.source-head-actions {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.source-speed-all {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 7px;
+  font-size: 8px;
+  color: #0f766e;
+  cursor: pointer;
+  background: #f0fdfa;
+  border: 1px solid #d1f5ec;
+  border-radius: 7px;
+}
+
+.source-speed-all:hover:not(:disabled) {
+  background: #e4fbf5;
+}
+
+.source-speed-all:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.source-speed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  margin-top: 8px;
+  background: #f8fafc;
+  border: 1px solid #edf0f3;
+  border-radius: 8px;
+}
+
+.source-speed-item {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 62px;
+  gap: 7px;
+  align-items: center;
+  min-height: 22px;
+}
+
+.source-speed-name {
+  overflow: hidden;
+  font-size: 8px;
+  color: #475467;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-speed-value {
+  overflow: hidden;
+  font-size: 8px;
+  color: #0f766e;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-speed-value.failed {
+  color: #b42318;
+}
+
+.source-speed-test {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 5px;
+  font-size: 7.5px;
+  color: #0f766e;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #d1f5ec;
+  border-radius: 5px;
+}
+
+.source-speed-test:hover:not(:disabled) {
+  background: #ecfdf5;
+}
+
+.source-speed-test:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .source-current {

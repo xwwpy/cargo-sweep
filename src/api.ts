@@ -15,6 +15,7 @@ import type {
   RustupSourceStatus,
   ScanProgress,
   ScanResult,
+  SourceSpeedResult,
 } from "./types";
 import {
   demoApplyCargoSource,
@@ -36,6 +37,7 @@ import {
   demoRustToolchainStatus,
   demoRustupSourceStatus,
   demoScan,
+  demoSourceSpeed,
   demoSetDefaultRustToolchain,
   demoSetRustupPath,
   demoUpdateRustToolchain,
@@ -369,6 +371,22 @@ export async function updateRustToolchain(
   return invoke<RustToolchainOperationResult>("update_rust_toolchain", {
     taskId,
     target,
+  });
+}
+
+export async function testSourceSpeed(
+  url: string,
+  maxBytes?: number,
+): Promise<SourceSpeedResult> {
+  if (isDemoMode()) {
+    return demoSourceSpeed(url);
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<SourceSpeedResult>("test_source_speed", {
+    url,
+    maxBytes: maxBytes ?? null,
   });
 }
 

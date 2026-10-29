@@ -10,6 +10,7 @@ import type {
   RustToolchainStatus,
   RustupSourceStatus,
   ScanResult,
+  SourceSpeedResult,
   TargetInfo,
 } from "../types";
 
@@ -363,6 +364,25 @@ export async function demoSetRustupPath(path: string): Promise<RustToolchainStat
   demoRustupInstalled = Boolean(path.trim());
   demoRustupPath = path.trim() || null;
   return demoToolchainStatus();
+}
+
+export async function demoSourceSpeed(
+  url: string,
+): Promise<SourceSpeedResult> {
+  const hash = [...url].reduce((total, char) => total + char.charCodeAt(0), 0);
+  const latencyMs = 35 + (hash % 180);
+  const speedBps = 2_400_000 + (hash % 9_000_000);
+  await new Promise((resolve) => window.setTimeout(resolve, 420 + (hash % 550)));
+  return {
+    url,
+    ok: true,
+    status: 200,
+    latencyMs,
+    durationMs: 420,
+    bytes: 640_000,
+    speedBps,
+    error: null,
+  };
 }
 
 export async function demoInstallRustup(): Promise<RustToolchainOperationResult> {
