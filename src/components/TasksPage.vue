@@ -284,7 +284,7 @@ function isActive(task: BackgroundTask): boolean {
           </div>
         </div>
 
-        <details v-if="task.output.length > 0" class="task-output">
+        <details v-if="task.output.length > 0" open class="task-output">
           <summary>任务输出（{{ task.output.length }} 行）</summary>
           <pre>{{ task.output.join("\n") }}</pre>
         </details>

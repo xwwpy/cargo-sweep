@@ -1578,6 +1578,37 @@ struct TrackedComponent {
     total_bytes: Option<u64>,
 }
 
+fn component_name_from_url(url: &str) -> Option<String> {
+    let filename = url.split('?').next()?.rsplit('/').next()?.trim();
+    if !(filename.ends_with(".tar.xz")
+        || filename.ends_with(".tar.gz")
+        || filename.ends_with(".tar.zst"))
+    {
+        return None;
+    }
+    const COMPONENTS: [&str; 11] = [
+        "rust-analyzer",
+        "rust-docs",
+        "rust-std",
+        "rust-src",
+        "rust-mingw",
+        "llvm-tools",
+        "clippy",
+        "rustfmt",
+        "rustc",
+        "cargo",
+        "miri",
+    ];
+    COMPONENTS
+        .iter()
+        .find(|name| {
+            filename
+                .strip_prefix(**name)
+                .is_some_and(|rest| rest.starts_with('-'))
+        })
+        .map(|name| (*name).to_string())
+}
+
 fn progress_size(bytes: u64) -> String {
     if bytes >= 1024 * 1024 * 1024 {
         format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
@@ -1682,30 +1713,45 @@ impl RustupProgress {
         if lower.contains("downloading file url=") {
             if let Some(url) = clean.split("downloading file url=").nth(1) {
                 let url = url.trim();
-                if url.ends_with(".tar.xz") || url.ends_with(".tar.gz") || url.ends_with(".tar.zst")
-                {
-                    if let Some(component) = self
+                if let Some(name) = component_name_from_url(url) {
+                    let current_name = self
                         .components
                         .iter()
                         .rev()
                         .find(|component| component.phase == "downloading")
-                    {
-                        let name = component.name.clone();
-                        let sizes = Arc::clone(&self.component_sizes);
-                        let already_requested = sizes
-                            .lock()
-                            .map(|sizes| sizes.contains_key(&name))
-                            .unwrap_or(false);
-                        if !already_requested && component.total_bytes.is_none() {
-                            let url = url.to_string();
-                            thread::spawn(move || {
-                                if let Some(size) = remote_content_size(&url) {
-                                    if let Ok(mut sizes) = sizes.lock() {
-                                        sizes.insert(name, size);
-                                    }
+                        .map(|component| component.name.clone());
+                    if current_name.as_deref() != Some(name.as_str()) {
+                        self.finish_downloading();
+                        self.downloads = self.downloads.saturating_add(1);
+                        self.phase = "download".into();
+                        self.components.push(TrackedComponent {
+                            name: name.clone(),
+                            phase: "downloading".into(),
+                            percent: 0,
+                            started: Some(Instant::now()),
+                            elapsed_ms: 0,
+                            speed_bps: 0,
+                            start_meter_bytes: self.meter_values().bytes,
+                            downloaded_bytes: 0,
+                            total_bytes: None,
+                        });
+                    }
+                    self.phase = "download".into();
+                    self.message = format!("正在下载 {name}");
+                    let sizes = Arc::clone(&self.component_sizes);
+                    let already_requested = sizes
+                        .lock()
+                        .map(|sizes| sizes.contains_key(&name))
+                        .unwrap_or(false);
+                    if !already_requested {
+                        let url = url.to_string();
+                        thread::spawn(move || {
+                            if let Some(size) = remote_content_size(&url) {
+                                if let Ok(mut sizes) = sizes.lock() {
+                                    sizes.insert(name, size);
                                 }
-                            });
-                        }
+                            }
+                        });
                     }
                 }
             }
@@ -1730,6 +1776,9 @@ impl RustupProgress {
             self.phase = "verify".into();
             self.percent = self.percent.max(8);
             self.message = "正在验证版本与组件信息…".into();
+        } else if lower.contains("downloading") && lower.contains(" components") {
+            self.phase = "download".into();
+            self.message = clean.trim().to_string();
         } else if lower.contains("downloading component") {
             self.finish_downloading();
             let name = component_name(&clean);
@@ -2422,6 +2471,45 @@ LLVM version: 23.1.1";
     }
 
     #[test]
+    #[ignore = "requires rustup and installs a small target"]
+    fn probes_real_rustup_target_stream() {
+        eprintln!(
+            "ENV RUSTUP_HOME={:?} CARGO_HOME={:?} TEMP={:?} cwd={:?}",
+            env::var_os("RUSTUP_HOME"),
+            env::var_os("CARGO_HOME"),
+            env::var_os("TEMP"),
+            env::current_dir()
+        );
+        let mut progress = RustupProgress::new(Arc::new(Mutex::new(DownloadMeter::default())));
+        let mut component_events = 0;
+        let (success, text) = run_streaming(
+            "rustup",
+            &[
+                "-v",
+                "target",
+                "add",
+                "thumbv7em-none-eabi",
+                "--toolchain",
+                "stable",
+            ],
+            |line| {
+                let snapshot = progress.observe(line);
+                if !snapshot.components.is_empty() {
+                    component_events += 1;
+                    eprintln!(
+                        "EVENT phase={} percent={} components={:?} line={:?}",
+                        snapshot.phase, snapshot.percent, snapshot.components, snapshot.line
+                    );
+                }
+            },
+        )
+        .unwrap();
+        eprintln!("SUCCESS={success} TEXT={text}");
+        assert!(success);
+        assert!(component_events > 0);
+    }
+
+    #[test]
     fn associates_percentage_progress_with_current_component() {
         let mut progress = RustupProgress::new(Arc::new(Mutex::new(DownloadMeter::default())));
         progress.observe("info: downloading component 'rustc'");
@@ -2449,6 +2537,35 @@ LLVM version: 23.1.1";
                 "77%".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn derives_component_names_from_archive_urls() {
+        assert_eq!(
+            component_name_from_url(
+                "https://static.rust-lang.org/dist/2025-09-18/rustc-1.90.0-x86_64-pc-windows-msvc.tar.xz"
+            )
+            .as_deref(),
+            Some("rustc")
+        );
+        assert_eq!(
+            component_name_from_url(
+                "https://static.rust-lang.org/dist/2025-09-18/rust-std-1.90.0-x86_64-pc-windows-msvc.tar.xz"
+            )
+            .as_deref(),
+            Some("rust-std")
+        );
+        assert_eq!(
+            component_name_from_url(
+                "https://static.rust-lang.org/dist/2025-09-18/clippy-1.90.0-x86_64-pc-windows-msvc.tar.xz"
+            )
+            .as_deref(),
+            Some("clippy")
+        );
+        assert!(component_name_from_url(
+            "https://static.rust-lang.org/dist/channel-rust-stable.toml"
+        )
+        .is_none());
     }
 
     #[test]
