@@ -8,6 +8,7 @@ export type ColorPalette =
   | "sunset"
   | "forest"
   | "graphite";
+export type LayoutStyle = "classic" | "minimal";
 
 export interface PaletteOption {
   id: ColorPalette;
@@ -57,6 +58,19 @@ export const colorPalettes: PaletteOption[] = [
 
 const STORAGE_KEY = "cargo-sweep.theme";
 const PALETTE_STORAGE_KEY = "cargo-sweep.palette";
+const LAYOUT_STORAGE_KEY = "cargo-sweep.layout";
+
+function readLayout(): LayoutStyle {
+  try {
+    const stored = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (stored === "classic" || stored === "minimal") {
+      return stored;
+    }
+  } catch {
+    // Fall through to the classic layout.
+  }
+  return "classic";
+}
 
 function readMode(): ThemeMode {
   try {
@@ -89,6 +103,7 @@ const media =
 const systemDark = ref(media?.matches ?? false);
 const mode = ref<ThemeMode>(readMode());
 const palette = ref<ColorPalette>(readPalette());
+const layout = ref<LayoutStyle>(readLayout());
 
 export const isDark = computed(
   () => mode.value === "dark" || (mode.value === "system" && systemDark.value),
@@ -117,6 +132,17 @@ watch(
   { immediate: true },
 );
 
+watch(
+  layout,
+  (nextLayout) => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    document.documentElement.dataset.layout = nextLayout;
+  },
+  { immediate: true },
+);
+
 media?.addEventListener("change", (event) => {
   systemDark.value = event.matches;
 });
@@ -139,12 +165,23 @@ function setPalette(nextPalette: ColorPalette) {
   }
 }
 
+function setLayout(nextLayout: LayoutStyle) {
+  layout.value = nextLayout;
+  try {
+    localStorage.setItem(LAYOUT_STORAGE_KEY, nextLayout);
+  } catch {
+    // Layout selection remains active for the current session.
+  }
+}
+
 export function useTheme() {
   return {
     mode,
     palette,
+    layout,
     isDark,
     setMode,
     setPalette,
+    setLayout,
   };
 }

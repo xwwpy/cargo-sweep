@@ -4,6 +4,7 @@ import { ElMessage } from "element-plus";
 import { listen } from "@tauri-apps/api/event";
 import {
   Check,
+  Close,
   Download,
   Loading,
   Monitor,
@@ -23,6 +24,7 @@ import {
   colorPalettes,
   useTheme,
   type ColorPalette,
+  type LayoutStyle,
   type ThemeMode,
 } from "./composables/useTheme";
 import { useUpdater } from "./composables/useUpdater";
@@ -50,14 +52,19 @@ const STORAGE_KEY = "cargo-sweep.scan-roots.v1";
 const {
   mode: themeMode,
   palette: themePalette,
+  layout: layoutStyle,
   isDark,
   setMode: setThemeMode,
   setPalette: setThemePalette,
+  setLayout: setThemeLayout,
 } = useTheme();
 const paletteLabel = computed(
   () =>
     colorPalettes.find((palette) => palette.id === themePalette.value)?.name ??
     "玫瑰星云",
+);
+const layoutLabel = computed(() =>
+  layoutStyle.value === "minimal" ? "简约布局" : "经典布局",
 );
 const themeLabel = computed(() => {
   const modeLabel =
@@ -412,6 +419,10 @@ function choosePalette(nextPalette: ColorPalette) {
   setThemePalette(nextPalette);
 }
 
+function chooseLayout(nextLayout: LayoutStyle) {
+  setThemeLayout(nextLayout);
+}
+
 async function allowReadAccess() {
   try {
     await openPrivacySettings();
@@ -504,8 +515,39 @@ function uniqueRoots(list: string[]): string[] {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ minimal: layoutStyle === 'minimal' }">
+    <header v-if="layoutStyle === 'minimal'" class="minimal-header">
+      <button class="minimal-brand" type="button" @click="navigateTo('targets')">
+        <img src="/logo.svg" alt="" />
+        <span>
+          <strong>Cargo Sweep</strong>
+          <small>MINIMAL</small>
+        </span>
+      </button>
+      <nav class="minimal-nav" aria-label="主导航">
+        <button
+          type="button"
+          :class="{ active: activePage === 'targets' }"
+          @click="navigateTo('targets')"
+        >
+          空间清理
+        </button>
+        <button
+          type="button"
+          :class="{ active: activePage === 'rust' }"
+          @click="navigateTo('rust')"
+        >
+          Rust 环境
+        </button>
+      </nav>
+      <div class="minimal-meta">
+        <span>{{ pageTitle }}</span>
+        <strong>v{{ APP_VERSION }}</strong>
+      </div>
+    </header>
+
     <SidebarPanel
+      v-if="layoutStyle === 'classic'"
       :roots="roots"
       :scanning="scanning"
       :target-count="targets.length"
@@ -594,6 +636,35 @@ function uniqueRoots(list: string[]): string[] {
                 </button>
               </div>
 
+              <div class="palette-heading layout-heading">
+                <span>布局风格</span>
+                <small>{{ layoutLabel }}</small>
+              </div>
+              <div class="layout-modes">
+                <button
+                  type="button"
+                  :class="{ active: layoutStyle === 'classic' }"
+                  @click="chooseLayout('classic')"
+                >
+                  <span class="layout-preview classic-preview" />
+                  <span>
+                    <strong>经典</strong>
+                    <small>侧栏 · 玻璃质感</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: layoutStyle === 'minimal' }"
+                  @click="chooseLayout('minimal')"
+                >
+                  <span class="layout-preview minimal-preview" />
+                  <span>
+                    <strong>简约</strong>
+                    <small>顶部导航 · 平面</small>
+                  </span>
+                </button>
+              </div>
+
               <div class="palette-heading">
                 <span>配色方案</span>
                 <small>{{ colorPalettes.length }} 种</small>
@@ -667,6 +738,43 @@ function uniqueRoots(list: string[]): string[] {
               {{ scanning ? "扫描中" : "重新扫描" }}
             </el-button>
           </template>
+        </div>
+      </div>
+
+      <div
+        v-if="layoutStyle === 'minimal' && activePage === 'targets'"
+        class="minimal-scope"
+      >
+        <span class="minimal-scope-label">扫描范围</span>
+        <div class="minimal-root-chips">
+          <span v-for="root in roots" :key="root" class="minimal-root">
+            <span>{{ basename(root) }}</span>
+            <button
+              type="button"
+              :disabled="scanning"
+              aria-label="移除扫描目录"
+              @click="removeRoot(root)"
+            >
+              <el-icon><Close /></el-icon>
+            </button>
+          </span>
+          <button
+            type="button"
+            class="minimal-add-root"
+            :disabled="scanning"
+            @click="addRoots"
+          >
+            <el-icon><Plus /></el-icon>
+            添加目录
+          </button>
+          <button
+            v-if="isMac"
+            type="button"
+            class="minimal-add-root"
+            @click="allowReadAccess"
+          >
+            允许读取
+          </button>
         </div>
       </div>
 
