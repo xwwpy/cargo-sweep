@@ -2302,6 +2302,9 @@ onUnmounted(() => {
               :value="version"
             />
           </el-select>
+          <span v-if="historyOptions.length === 0" class="history-empty">
+            历史版本暂不可用，可直接输入版本号安装
+          </span>
           <el-button
             :disabled="!rustupReady || !historyTarget || Boolean(busy)"
             :loading="busy === `install-${historyTarget}`"
@@ -4334,6 +4337,11 @@ html.dark .toolchain-section-nav button.active {
 
 .history-select {
   width: 132px;
+}
+
+.history-empty {
+  font-size: 10px;
+  color: #9a8baa;
 }
 
 .history-actions :deep(.el-select__wrapper) {

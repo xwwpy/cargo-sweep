@@ -318,10 +318,15 @@ pub fn latest() -> Result<LatestRustVersions, String> {
 
     let stable = stable.ok();
     let nightly = nightly.ok();
-    let historical_versions = stable
+    let mut historical_versions = stable
         .as_ref()
         .map(|release| fetch_historical_versions(&release.release))
         .unwrap_or_default();
+    if historical_versions.is_empty() {
+        if let Some(release) = stable.as_ref() {
+            historical_versions = fallback_historical_versions(&release.release);
+        }
+    }
 
     if stable.is_none() && nightly.is_none() {
         return Err(if errors.is_empty() {
@@ -696,6 +701,41 @@ fn append_output(output: &mut String, text: &str) {
     output.push_str(text.trim());
 }
 
+fn remove_toolchain_directory(target: &str) -> Result<bool, String> {
+    let home = env::var_os("RUSTUP_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".rustup")))
+        .ok_or_else(|| "无法确定 RUSTUP_HOME。".to_string())?;
+    let directory = home.join("toolchains").join(target);
+    if !directory.exists() {
+        return Ok(false);
+    }
+    let metadata =
+        fs::symlink_metadata(&directory).map_err(|error| format!("读取工具链目录失败：{error}"))?;
+    if metadata.file_type().is_symlink() {
+        fs::remove_file(&directory).map_err(|error| format!("移除工具链链接失败：{error}"))?;
+    } else {
+        fs::remove_dir_all(&directory).map_err(|error| format!("移除工具链目录失败：{error}"))?;
+    }
+    Ok(true)
+}
+
+fn detect_after_uninstall() -> Result<RustToolchainStatus, String> {
+    let mut last_error = String::new();
+    for attempt in 0..4 {
+        match detect() {
+            Ok(status) => return Ok(status),
+            Err(error) => last_error = error,
+        }
+        if attempt < 3 {
+            std::thread::sleep(Duration::from_millis(250 * (attempt + 1)));
+        }
+    }
+    Err(format!(
+        "删除命令已执行，但无法确认工具链状态：{last_error}"
+    ))
+}
+
 pub fn uninstall(target: String) -> Result<ToolchainOperationResult, String> {
     let target = validate_target(&target)?;
     let before = detect()?;
@@ -711,30 +751,103 @@ pub fn uninstall(target: String) -> Result<ToolchainOperationResult, String> {
         return Err("至少需要保留一个 Rust 工具链。".into());
     }
 
-    let mut command = Command::new("rustup");
-    command.args(["toolchain", "uninstall", &target]);
-    apply_no_window(&mut command);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output = command
-        .output()
-        .map_err(|error| format!("无法启动 rustup toolchain uninstall：{error}"))?;
-    let success = output.status.success();
-    let text = clean_output(&format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    ));
-    let status = detect().unwrap_or(before);
-    Ok(ToolchainOperationResult {
-        success,
-        output: if text.trim().is_empty() {
-            if success {
-                format!("已删除工具链 {target}")
-            } else {
-                format!("删除工具链 {target} 失败。")
+    let mut combined = String::new();
+    let mut command_succeeded = false;
+    for attempt in 0..2 {
+        let mut command = Command::new("rustup");
+        command.args(["toolchain", "uninstall", &target]);
+        apply_no_window(&mut command);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let output = command
+            .output()
+            .map_err(|error| format!("无法启动 rustup toolchain uninstall：{error}"))?;
+        command_succeeded = output.status.success();
+        let text = clean_output(&format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+        if !text.trim().is_empty() {
+            if !combined.is_empty() {
+                combined.push('\n');
             }
+            combined.push_str(text.trim());
+        }
+
+        let status = detect_after_uninstall()?;
+        let still_installed = status
+            .toolchains
+            .iter()
+            .any(|toolchain| toolchain.name == target);
+        if !still_installed {
+            return Ok(ToolchainOperationResult {
+                success: true,
+                output: if combined.trim().is_empty() {
+                    format!("已删除工具链 {target}")
+                } else {
+                    combined.trim().to_string()
+                },
+                status,
+            });
+        }
+        if attempt == 0 {
+            if !combined.is_empty() {
+                combined.push('\n');
+            }
+            combined.push_str("工具链仍在 rustup toolchain list 中，正在重试删除…");
+            std::thread::sleep(Duration::from_millis(300));
+        }
+    }
+
+    let mut cleanup_note = String::new();
+    if command_succeeded {
+        match remove_toolchain_directory(&target) {
+            Ok(true) => {
+                cleanup_note = "rustup 未能移除工具链目录，已执行目录清理".into();
+                let status = detect_after_uninstall()?;
+                let still_installed = status
+                    .toolchains
+                    .iter()
+                    .any(|toolchain| toolchain.name == target);
+                if !still_installed {
+                    if !combined.is_empty() {
+                        combined.push('\n');
+                    }
+                    combined.push_str(&cleanup_note);
+                    return Ok(ToolchainOperationResult {
+                        success: true,
+                        output: combined.trim().to_string(),
+                        status,
+                    });
+                }
+            }
+            Ok(false) => {}
+            Err(error) => {
+                cleanup_note = format!("；清理工具链目录失败：{error}");
+            }
+        }
+    }
+
+    let status = detect_after_uninstall()?;
+    let home = env::var_os("RUSTUP_HOME")
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|| "默认 RUSTUP_HOME".into());
+    let command_note = if command_succeeded {
+        "rustup 命令返回成功，但工具链仍存在"
+    } else {
+        "rustup 命令返回失败"
+    };
+    Ok(ToolchainOperationResult {
+        success: false,
+        output: if combined.trim().is_empty() {
+            format!(
+                "删除工具链 {target} 失败：{command_note}{cleanup_note}。RUSTUP_HOME={home}。请确认终端使用相同的 Rust 环境后重试。"
+            )
         } else {
-            text.trim().to_string()
+            format!(
+                "{}\n\n删除工具链 {target} 失败：{command_note}{cleanup_note}。RUSTUP_HOME={home}。请确认终端使用相同的 Rust 环境后重试。",
+                combined.trim()
+            )
         },
         status,
     })
@@ -1255,13 +1368,37 @@ fn fetch_historical_versions(current_release: &str) -> Vec<String> {
         }
     }
 
-    let versions = fetch_historical_versions_uncached(current_release);
-    if let Ok(mut guard) = cache.lock() {
-        *guard = Some((
-            current_release.to_string(),
-            Instant::now(),
-            versions.clone(),
-        ));
+    let mut versions = Vec::new();
+    for attempt in 0..3 {
+        versions = fetch_historical_versions_uncached(current_release);
+        if !versions.is_empty() {
+            break;
+        }
+        if attempt < 2 {
+            std::thread::sleep(Duration::from_millis(500 * (attempt + 1)));
+        }
+    }
+    if !versions.is_empty() {
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((
+                current_release.to_string(),
+                Instant::now(),
+                versions.clone(),
+            ));
+        }
+    }
+    versions
+}
+
+fn fallback_historical_versions(current_release: &str) -> Vec<String> {
+    let Some((major, minor, _patch)) = parse_stable_release(current_release) else {
+        return Vec::new();
+    };
+    let mut versions = Vec::new();
+    for offset in 1..=8 {
+        if minor >= offset {
+            versions.push(format!("{major}.{}.0", minor - offset));
+        }
     }
     versions
 }
