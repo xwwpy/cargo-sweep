@@ -35,6 +35,18 @@ export interface DeleteResult {
   freedBytes: number;
   failures: DeleteFailure[];
   elapsedMs: number;
+  cancelled: boolean;
+}
+
+export interface TaskProgressEvent extends ToolchainProgress {
+  taskId: string;
+}
+
+export interface CleanupReport {
+  removedFiles: number;
+  freedBytes: number;
+  skipped: boolean;
+  message: string;
 }
 
 export interface NamedCargoSource {

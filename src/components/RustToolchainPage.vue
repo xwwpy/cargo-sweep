@@ -5,6 +5,10 @@ import { listen } from "@tauri-apps/api/event";
 import { formatBytes } from "../lib/format";
 import { operationBusy as busy } from "../composables/useOperationBusy";
 import {
+  hasRunningToolchainTask,
+  startTask,
+} from "../composables/useTasks";
+import {
   CircleCheck,
   Clock,
   CopyDocument,
@@ -41,6 +45,7 @@ import type {
   LatestRustToolchain,
   LatestRustVersions,
   RustChannel,
+  RustToolchainOperationResult,
   RustToolchainStatus,
   RustupSourceStatus,
   ComponentProgress,
@@ -888,6 +893,57 @@ async function runOperation(
   }
 }
 
+interface BackgroundToolchainOptions {
+  kind: "toolchain" | "rustup" | "uninstall";
+  title: string;
+  detail: string;
+  successMessage: string;
+  run: (taskId: string) => Promise<RustToolchainOperationResult>;
+  afterFinish?: (result: RustToolchainOperationResult) => void;
+}
+
+function runBackgroundToolchain(options: BackgroundToolchainOptions) {
+  if (busy.value || hasRunningToolchainTask.value) {
+    ElMessage.info("已有工具链任务在后台运行，请等待完成或前往任务中心取消");
+    return;
+  }
+  startTask({
+    kind: options.kind,
+    title: options.title,
+    detail: options.detail,
+    page: "rust",
+    run: options.run,
+    successMessage: options.successMessage,
+    onFinished: (result, error) => {
+      if (error) {
+        actionOutput.value = errorMessage(error);
+        actionSuccess.value = false;
+        ElMessage.error(`${options.title}失败：${errorMessage(error)}`);
+        return;
+      }
+      if (!result) {
+        return;
+      }
+      status.value = result.status;
+      actionOutput.value = result.output;
+      actionSuccess.value = result.success;
+      emit("rust-state", result.status.installed);
+      if (result.output.includes("任务已取消")) {
+        actionSuccess.value = false;
+        return;
+      }
+      if (result.success) {
+        ElMessage.success(options.successMessage);
+      } else {
+        ElMessage.warning(`${options.title}已结束，但命令返回失败`);
+      }
+      options.afterFinish?.(result);
+      void load();
+      void loadLatest();
+    },
+  });
+}
+
 async function saveRustupPath() {
   if (!rustupPathInput.value.trim()) {
     ElMessage.warning("请输入 rustup 可执行文件或所在目录");
@@ -909,7 +965,13 @@ async function saveRustupPath() {
 }
 
 async function installRustupAction() {
-  await runOperation("rustup", installRustup, "rustup 已安装");
+  runBackgroundToolchain({
+    kind: "rustup",
+    title: "安装 rustup",
+    detail: "下载并初始化 Rust 工具链管理器",
+    successMessage: "rustup 已安装",
+    run: (taskId) => installRustup(taskId),
+  });
 }
 
 function openCargoHomeDialog() {
@@ -1084,26 +1146,35 @@ async function removeToolchain(toolchain: InstalledRustToolchain) {
   } catch {
     return;
   }
-  await runOperation(
-    `uninstall-${toolchain.name}`,
-    () => uninstallRustToolchain(toolchain.name),
-    "工具链已删除",
-  );
+  if (toolchain.default || toolchain.active) {
+    return;
+  }
+  runBackgroundToolchain({
+    kind: "uninstall",
+    title: `删除 ${toolchain.name}`,
+    detail: "移除工具链文件，可在任务中心取消",
+    successMessage: "工具链已删除",
+    run: (taskId) => uninstallRustToolchain(taskId, toolchain.name),
+  });
 }
 
 async function installChannel(view: ChannelView) {
   const setDefault = !status.value?.installed || !status.value?.defaultToolchain;
-  await runOperation(
-    `install-${view.key}`,
-    () => installRustToolchain(view.key, setDefault),
-    `${view.label} 工具链已安装`,
-  );
+  runBackgroundToolchain({
+    kind: "toolchain",
+    title: `安装 ${view.label} 工具链`,
+    detail: "下载组件并安装到 RUSTUP_HOME",
+    successMessage: `${view.label} 工具链已安装`,
+    run: (taskId) => installRustToolchain(taskId, view.key, setDefault),
+  });
 }
 
 async function updateChannel(view: ChannelView) {
-  if (busy.value) {
+  if (busy.value || hasRunningToolchainTask.value) {
+    ElMessage.info("已有工具链任务在后台运行，请等待完成或前往任务中心取消");
     return;
   }
+  let shouldStart = false;
   busy.value = `verify-${view.key}`;
   actionOutput.value = null;
   actionSuccess.value = null;
@@ -1131,43 +1202,7 @@ async function updateChannel(view: ChannelView) {
       ElMessage.success(`${view.label} 已经是最新版本`);
       return;
     }
-
-    busy.value = `update-${view.key}`;
-    startTimer();
-    const result = await updateRustToolchain(view.toolchain ?? view.key);
-    status.value = result.status;
-    actionOutput.value = result.output;
-    actionSuccess.value = result.success;
-
-    let latestAfter: LatestRustVersions;
-    try {
-      latestAfter = await refreshLatestVersions();
-    } catch (reason) {
-      actionOutput.value = `${result.output}\n\n更新命令已结束，但二次检查最新版本失败：${errorMessage(reason)}`;
-      ElMessage.warning("更新命令已结束，但无法确认最新版本");
-      return;
-    }
-    const targetAfter = latestChannelVersion(latestAfter, view.key);
-    if (!targetAfter) {
-      actionOutput.value = `${result.output}\n\n更新命令已结束，但未获取到最新版本。`;
-      actionSuccess.value = false;
-      ElMessage.warning("更新命令已结束，但未获取到最新版本");
-      return;
-    }
-    if (isChannelAtLatest(result.status, latestAfter, view.key)) {
-      actionSuccess.value = result.success;
-      actionOutput.value = `已确认 ${view.label} 更新到 ${targetAfter.release}。\n\n${result.output}`;
-      if (result.success) {
-        ElMessage.success(`${view.label} 已更新到最新版本`);
-      } else {
-        ElMessage.warning("更新命令返回失败，但当前版本已与最新版本一致");
-      }
-      return;
-    }
-
-    actionSuccess.value = false;
-    actionOutput.value = `${result.output}\n\n二次校验失败：当前版本仍与最新版本 ${targetAfter.release} 不一致，请检查网络、Rustup 下载源或稍后重试。`;
-    ElMessage.warning("更新已执行，但二次校验仍未检测到最新版本");
+    shouldStart = true;
   } catch (reason) {
     actionOutput.value = errorMessage(reason);
     actionSuccess.value = false;
@@ -1176,6 +1211,51 @@ async function updateChannel(view: ChannelView) {
     stopTimer();
     busy.value = null;
   }
+  if (!shouldStart) {
+    return;
+  }
+  runBackgroundToolchain({
+    kind: "toolchain",
+    title: `更新 ${view.label} 工具链`,
+    detail: "后台下载并安装缺失的组件",
+    successMessage: `${view.label} 已更新到最新版本`,
+    run: (taskId) => updateRustToolchain(taskId, view.toolchain ?? view.key),
+    afterFinish: (result) => {
+      void verifyUpdatedChannel(view, result);
+    },
+  });
+}
+
+async function verifyUpdatedChannel(
+  view: ChannelView,
+  result: RustToolchainOperationResult,
+) {
+  if (result.output.includes("任务已取消")) {
+    return;
+  }
+  let latestAfter: LatestRustVersions;
+  try {
+    latestAfter = await refreshLatestVersions();
+  } catch (reason) {
+    actionOutput.value = `${result.output}\n\n更新命令已结束，但二次检查最新版本失败：${errorMessage(reason)}`;
+    ElMessage.warning("更新命令已结束，但无法确认最新版本");
+    return;
+  }
+  const targetAfter = latestChannelVersion(latestAfter, view.key);
+  if (!targetAfter) {
+    actionOutput.value = `${result.output}\n\n更新命令已结束，但未获取到最新版本。`;
+    actionSuccess.value = false;
+    ElMessage.warning("更新命令已结束，但未获取到最新版本");
+    return;
+  }
+  if (isChannelAtLatest(result.status, latestAfter, view.key)) {
+    actionSuccess.value = result.success;
+    actionOutput.value = `已确认 ${view.label} 更新到 ${targetAfter.release}。\n\n${result.output}`;
+    return;
+  }
+  actionSuccess.value = false;
+  actionOutput.value = `${result.output}\n\n二次校验失败：当前版本仍与最新版本 ${targetAfter.release} 不一致，请检查网络、Rustup 下载源或稍后重试。`;
+  ElMessage.warning("更新已执行，但二次校验仍未检测到最新版本");
 }
 
 async function switchChannel(view: ChannelView) {
@@ -1205,11 +1285,14 @@ async function installHistory() {
     ElMessage.warning("请选择要安装的历史版本");
     return;
   }
-  await runOperation(
-    `install-${historyTarget.value}`,
-    () => installRustToolchain(historyTarget.value, false),
-    `${historyTarget.value} 工具链已安装`,
-  );
+  const target = historyTarget.value;
+  runBackgroundToolchain({
+    kind: "toolchain",
+    title: `安装 ${target}`,
+    detail: "安装历史版本工具链",
+    successMessage: `${target} 工具链已安装`,
+    run: (taskId) => installRustToolchain(taskId, target, false),
+  });
 }
 
 async function installCustom() {
@@ -1218,11 +1301,13 @@ async function installCustom() {
     ElMessage.warning("请输入 stable、beta、nightly 或类似 1.85.0 的版本号");
     return;
   }
-  await runOperation(
-    `install-${target}`,
-    () => installRustToolchain(target, false),
-    `${target} 工具链已安装`,
-  );
+  runBackgroundToolchain({
+    kind: "toolchain",
+    title: `安装 ${target}`,
+    detail: "安装自定义版本工具链",
+    successMessage: `${target} 工具链已安装`,
+    run: (taskId) => installRustToolchain(taskId, target, false),
+  });
 }
 
 function retryLatest() {

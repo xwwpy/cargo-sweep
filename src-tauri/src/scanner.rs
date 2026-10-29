@@ -76,6 +76,7 @@ pub struct DeleteResult {
     pub freed_bytes: u64,
     pub failures: Vec<DeleteFailure>,
     pub elapsed_ms: u64,
+    pub cancelled: bool,
 }
 
 #[derive(Debug, Default)]
@@ -182,14 +183,34 @@ where
 /// Validate and delete Cargo target directories. Every path is re-validated
 /// immediately before deletion, so a forged frontend payload cannot remove an
 /// arbitrary directory.
+#[cfg(test)]
 pub fn delete_targets(paths: Vec<String>) -> DeleteResult {
+    delete_targets_with_progress(paths, || false, |_, _, _| {})
+}
+
+pub fn delete_targets_with_progress<C, F>(
+    paths: Vec<String>,
+    mut is_cancelled: C,
+    mut on_progress: F,
+) -> DeleteResult
+where
+    C: FnMut() -> bool,
+    F: FnMut(usize, usize, &str),
+{
     let started = Instant::now();
+    let total = paths.len();
     let mut deleted = Vec::new();
     let mut failures = Vec::new();
     let mut freed_bytes = 0u64;
     let mut seen = HashSet::new();
+    let mut cancelled = false;
 
-    for raw_path in paths {
+    for (index, raw_path) in paths.into_iter().enumerate() {
+        if is_cancelled() {
+            cancelled = true;
+            break;
+        }
+        on_progress(index, total, &raw_path);
         let path = PathBuf::from(&raw_path);
 
         let canonical = match validate_target(&path) {
@@ -220,11 +241,13 @@ pub fn delete_targets(paths: Vec<String>) -> DeleteResult {
         }
     }
 
+    on_progress(total, total.max(1), "");
     DeleteResult {
         deleted,
         freed_bytes,
         failures,
         elapsed_ms: started.elapsed().as_millis() as u64,
+        cancelled,
     }
 }
 

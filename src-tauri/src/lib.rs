@@ -1,9 +1,11 @@
+mod background;
 mod cargo_home;
 mod cargo_source;
 mod rust_toolchain;
 mod rustup_source;
 mod scanner;
 
+use background::{CleanupReport, TaskProgressEvent};
 use cargo_home::{CargoHomeMigrationResult, CargoHomeStatus};
 use cargo_source::{ApplySourceResult, CargoSourceStatus};
 use rust_toolchain::{
@@ -102,7 +104,11 @@ async fn scan_targets(app: tauri::AppHandle, roots: Vec<String>) -> Result<ScanR
 }
 
 #[tauri::command]
-async fn delete_targets(paths: Vec<String>) -> Result<DeleteResult, String> {
+async fn delete_targets(
+    app: tauri::AppHandle,
+    task_id: String,
+    paths: Vec<String>,
+) -> Result<DeleteResult, String> {
     if paths.is_empty() {
         return Err("没有选择要删除的 target 目录。".to_string());
     }
@@ -110,9 +116,47 @@ async fn delete_targets(paths: Vec<String>) -> Result<DeleteResult, String> {
         return Err("一次最多删除 512 个 target 目录。".to_string());
     }
 
-    tauri::async_runtime::spawn_blocking(move || scanner::delete_targets(paths))
-        .await
-        .map_err(|error| format!("删除任务异常退出：{error}"))
+    background::register(&task_id, "delete");
+    let progress_task_id = task_id.clone();
+    let cleanup_task_id = task_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        background::with_task(&task_id, || {
+            scanner::delete_targets_with_progress(
+                paths,
+                background::current_cancelled,
+                |index, total, path| {
+                    let percent = ((index * 100) / total.max(1)) as u8;
+                    let name = std::path::Path::new(path)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("target");
+                    let _ = app.emit(
+                        "task-progress",
+                        TaskProgressEvent::simple(
+                            progress_task_id.clone(),
+                            percent,
+                            format!("正在清理 {name}"),
+                            "delete",
+                        ),
+                    );
+                },
+            )
+        })
+    })
+    .await
+    .map_err(|error| format!("删除任务异常退出：{error}"));
+    background::unregister(&cleanup_task_id);
+    result
+}
+
+#[tauri::command]
+fn cancel_background_task(task_id: String) -> bool {
+    background::cancel(&task_id)
+}
+
+#[tauri::command]
+fn cleanup_task_artifacts(started_at_ms: u64, kind: String) -> CleanupReport {
+    background::cleanup_artifacts(started_at_ms, &kind)
 }
 
 #[tauri::command]
@@ -208,15 +252,37 @@ async fn set_rustup_path(path: String) -> Result<RustToolchainStatus, String> {
         .map_err(|error| format!("设置 rustup 路径任务异常退出：{error}"))?
 }
 
+fn emit_toolchain_progress(
+    app: &tauri::AppHandle,
+    task_id: &str,
+    progress: rust_toolchain::OperationProgress,
+) {
+    let _ = app.emit("toolchain-progress", progress.clone());
+    let _ = app.emit(
+        "task-progress",
+        TaskProgressEvent::from_progress(task_id.to_string(), progress),
+    );
+}
+
 #[tauri::command]
-async fn install_rustup(app: tauri::AppHandle) -> Result<ToolchainOperationResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        rust_toolchain::install_rustup_with_progress(|progress| {
-            let _ = app.emit("toolchain-progress", progress);
+async fn install_rustup(
+    app: tauri::AppHandle,
+    task_id: String,
+) -> Result<ToolchainOperationResult, String> {
+    background::register(&task_id, "rustup");
+    let progress_task_id = task_id.clone();
+    let cleanup_task_id = task_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        background::with_task(&task_id, || {
+            rust_toolchain::install_rustup_with_progress(|progress| {
+                emit_toolchain_progress(&app, &progress_task_id, progress);
+            })
         })
     })
     .await
-    .map_err(|error| format!("安装 rustup 任务异常退出：{error}"))?
+    .map_err(|error| format!("安装 rustup 任务异常退出：{error}"));
+    background::unregister(&cleanup_task_id);
+    result?
 }
 
 #[tauri::command]
@@ -238,16 +304,24 @@ fn open_privacy_settings() -> Result<(), String> {
 #[tauri::command]
 async fn install_rust_toolchain(
     app: tauri::AppHandle,
+    task_id: String,
     target: String,
     set_default: bool,
 ) -> Result<ToolchainOperationResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        rust_toolchain::install_with_progress(target, set_default, |progress| {
-            let _ = app.emit("toolchain-progress", progress);
+    background::register(&task_id, "toolchain");
+    let progress_task_id = task_id.clone();
+    let cleanup_task_id = task_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        background::with_task(&task_id, || {
+            rust_toolchain::install_with_progress(target, set_default, |progress| {
+                emit_toolchain_progress(&app, &progress_task_id, progress);
+            })
         })
     })
     .await
-    .map_err(|error| format!("安装 Rust 工具链任务异常退出：{error}"))?
+    .map_err(|error| format!("安装 Rust 工具链任务异常退出：{error}"));
+    background::unregister(&cleanup_task_id);
+    result?
 }
 
 #[tauri::command]
@@ -260,22 +334,55 @@ async fn set_default_rust_toolchain(target: String) -> Result<ToolchainOperation
 #[tauri::command]
 async fn update_rust_toolchain(
     app: tauri::AppHandle,
+    task_id: String,
     target: Option<String>,
 ) -> Result<ToolchainOperationResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        rust_toolchain::update_with_progress(target, |progress| {
-            let _ = app.emit("toolchain-progress", progress);
+    background::register(&task_id, "toolchain");
+    let progress_task_id = task_id.clone();
+    let cleanup_task_id = task_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        background::with_task(&task_id, || {
+            rust_toolchain::update_with_progress(target, |progress| {
+                emit_toolchain_progress(&app, &progress_task_id, progress);
+            })
         })
     })
     .await
-    .map_err(|error| format!("更新 Rust 工具链任务异常退出：{error}"))?
+    .map_err(|error| format!("更新 Rust 工具链任务异常退出：{error}"));
+    background::unregister(&cleanup_task_id);
+    result?
 }
 
 #[tauri::command]
-async fn uninstall_rust_toolchain(target: String) -> Result<ToolchainOperationResult, String> {
-    tauri::async_runtime::spawn_blocking(move || rust_toolchain::uninstall(target))
-        .await
-        .map_err(|error| format!("删除 Rust 工具链任务异常退出：{error}"))?
+async fn uninstall_rust_toolchain(
+    app: tauri::AppHandle,
+    task_id: String,
+    target: String,
+) -> Result<ToolchainOperationResult, String> {
+    background::register(&task_id, "toolchain");
+    let blocking_task_id = task_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        background::with_task(&blocking_task_id, || rust_toolchain::uninstall(target))
+    })
+    .await
+    .map_err(|error| format!("删除 Rust 工具链任务异常退出：{error}"));
+    background::unregister(&task_id);
+    if let Ok(Ok(value)) = &result {
+        let _ = app.emit(
+            "task-progress",
+            TaskProgressEvent::simple(
+                task_id,
+                if value.success { 100 } else { 0 },
+                if value.success {
+                    "工具链已删除".to_string()
+                } else {
+                    "删除工具链失败".to_string()
+                },
+                "delete",
+            ),
+        );
+    }
+    result?
 }
 
 #[tauri::command]
@@ -338,6 +445,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_targets,
             delete_targets,
+            cancel_background_task,
+            cleanup_task_artifacts,
             default_scan_roots,
             cargo_home_status,
             rustup_source_status,

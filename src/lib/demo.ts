@@ -511,5 +511,6 @@ export async function demoDelete(paths: string[]): Promise<DeleteResult> {
     freedBytes,
     failures: [],
     elapsedMs: 612,
+    cancelled: false,
   };
 }

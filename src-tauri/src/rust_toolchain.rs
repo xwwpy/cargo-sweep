@@ -1,3 +1,4 @@
+use crate::background;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -367,7 +368,7 @@ where
         },
     )?;
 
-    if !success && is_versioned && custom_source {
+    if !success && !background::current_cancelled() && is_versioned && custom_source {
         on_progress(OperationProgress::new(
             5,
             "当前下载源缺少该版本，改用官方源重试",
@@ -466,7 +467,7 @@ where
     if !success && text.trim().is_empty() {
         return Err("rustup update 失败，未返回输出。".into());
     }
-    if !success && needs_toolchain_repair(&text) {
+    if !success && !background::current_cancelled() && needs_toolchain_repair(&text) {
         if let Some(toolchain_name) = toolchain.clone() {
             on_progress(OperationProgress::new(
                 4,
@@ -746,6 +747,9 @@ pub fn install_rustup_with_progress<F>(
 where
     F: FnMut(OperationProgress),
 {
+    if background::current_cancelled() {
+        return Err("任务已取消。".into());
+    }
     crate::rustup_source::apply_saved_source();
     prepare_rust_environment();
     if run("rustup", &["--version"]).is_ok() {
@@ -771,6 +775,9 @@ where
         return Err("winget 已结束，但未检测到 rustup，请检查 winget 输出。".into());
     }
 
+    if background::current_cancelled() {
+        return Err("任务已取消。".into());
+    }
     on_progress(OperationProgress::new(3, "准备下载 rustup-init"));
     let target = rustup_target()?;
     let executable_name = if cfg!(windows) {
@@ -1628,6 +1635,10 @@ where
             format!("无法运行 {program}：{error}")
         }
     })?;
+    let task_control = background::current_control();
+    if let Some(control) = &task_control {
+        control.set_pid(child.id());
+    }
     let stdout = child
         .stdout
         .take()
@@ -1656,7 +1667,13 @@ where
     drop(sender);
 
     let mut text = String::new();
+    let mut cancelled = false;
     loop {
+        if background::current_cancelled() {
+            cancelled = true;
+            let _ = child.kill();
+            break;
+        }
         match receiver.recv_timeout(Duration::from_millis(400)) {
             Ok(line) => {
                 if line.is_empty() {
@@ -1675,8 +1692,15 @@ where
     let status = child
         .wait()
         .map_err(|error| format!("等待 {program} 退出失败：{error}"))?;
-    let success = status.success();
-    let text = clean_output(&text);
+    if let Some(control) = &task_control {
+        control.clear_pid();
+    }
+    let success = status.success() && !cancelled;
+    let text = if cancelled {
+        clean_output(&format!("{text}\n任务已取消"))
+    } else {
+        clean_output(&text)
+    };
     if !success && text.trim().is_empty() {
         return Err(format!("{program} 执行失败，退出码 {:?}", status.code()));
     }

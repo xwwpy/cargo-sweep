@@ -7,6 +7,7 @@ import {
   InfoFilled,
   Lock,
   Plus,
+  Tickets,
 } from "@element-plus/icons-vue";
 import { basename, cleanPath, formatBytes } from "../lib/format";
 
@@ -18,8 +19,9 @@ defineProps<{
   version: string;
   updateAvailable: boolean;
   checkingUpdates: boolean;
-  activePage: "targets" | "rust";
+  activePage: "targets" | "rust" | "tasks";
   rustInstalled: boolean;
+  taskCount: number;
   isMac: boolean;
 }>();
 
@@ -27,7 +29,7 @@ defineEmits<{
   add: [];
   remove: [root: string];
   "check-update": [];
-  navigate: [page: "targets" | "rust"];
+  navigate: [page: "targets" | "rust" | "tasks"];
   "allow-read": [];
 }>();
 </script>
@@ -62,6 +64,16 @@ defineEmits<{
         <span class="nav-icon"><el-icon><Cpu /></el-icon></span>
         <span class="nav-title">Rust 环境</span>
         <span class="nav-hint">Toolchain &amp; Registry</span>
+      </button>
+      <button
+        class="nav-item nav-tasks"
+        :class="{ active: activePage === 'tasks' }"
+        type="button"
+        @click="$emit('navigate', 'tasks')"
+      >
+        <span class="nav-icon"><el-icon><Tickets /></el-icon></span>
+        <span class="nav-title">任务中心</span>
+        <span class="nav-hint">{{ taskCount }} 进行中</span>
       </button>
     </nav>
 
@@ -109,7 +121,7 @@ defineEmits<{
       </div>
     </template>
 
-    <div v-else class="rust-side">
+    <div v-else-if="activePage === 'rust'" class="rust-side">
       <span class="rust-side-kicker">RUST WORKSPACE</span>
       <div class="rust-side-status" :class="{ ready: rustInstalled }">
         <span class="rust-side-dot" />
@@ -121,6 +133,20 @@ defineEmits<{
         <div><span>存储</span><strong>HOME 与环境变量</strong></div>
       </div>
       <p>工具链、下载源与存储设置已合并到同一个 Rust 环境工作区。</p>
+    </div>
+
+    <div v-else class="rust-side">
+      <span class="rust-side-kicker">BACKGROUND TASKS</span>
+      <div class="rust-side-status" :class="{ ready: taskCount > 0 }">
+        <span class="rust-side-dot" />
+        {{ taskCount > 0 ? `${taskCount} 个任务进行中` : "没有进行中的任务" }}
+      </div>
+      <div class="rust-side-list">
+        <div><span>执行中</span><strong>{{ taskCount }}</strong></div>
+        <div><span>模式</span><strong>后台并发</strong></div>
+        <div><span>控制</span><strong>取消与清理</strong></div>
+      </div>
+      <p>任务独立于页面运行，可以随时切换到其他页面。</p>
     </div>
 
     <button
@@ -136,17 +162,37 @@ defineEmits<{
 
     <div class="sidebar-spacer" />
 
-    <div class="safety-card" :class="{ 'rust-mode': activePage === 'rust' }">
+    <div
+      class="safety-card"
+      :class="{
+        'rust-mode': activePage === 'rust',
+        'tasks-mode': activePage === 'tasks',
+      }"
+    >
       <div class="safety-icon">
-        <el-icon><Cpu v-if="activePage === 'rust'" /><Lock v-else /></el-icon>
+        <el-icon>
+          <Tickets v-if="activePage === 'tasks'" />
+          <Cpu v-else-if="activePage === 'rust'" />
+          <Lock v-else />
+        </el-icon>
       </div>
       <div>
-        <h4>{{ activePage === "rust" ? "一处配置" : "只删 target" }}</h4>
+        <h4>
+          {{
+            activePage === "tasks"
+              ? "后台任务"
+              : activePage === "rust"
+                ? "一处配置"
+                : "只删 target"
+          }}
+        </h4>
         <p>
           {{
-            activePage === "rust"
-              ? "工具链、下载源与存储设置集中管理。"
-              : "校验 Cargo.toml，跳过符号链接。"
+            activePage === "tasks"
+              ? "任务独立运行，支持并发、取消和清理。"
+              : activePage === "rust"
+                ? "工具链、下载源与存储设置集中管理。"
+                : "校验 Cargo.toml，跳过符号链接。"
           }}
         </p>
       </div>
@@ -159,10 +205,15 @@ defineEmits<{
           <i />
           <span>{{ formatBytes(totalBytes) }}</span>
         </template>
-        <template v-else>
+        <template v-else-if="activePage === 'rust'">
           <span>Rust 环境</span>
           <i />
           <span>{{ rustInstalled ? "已安装" : "待安装" }}</span>
+        </template>
+        <template v-else>
+          <span>{{ taskCount }} 个任务</span>
+          <i />
+          <span>后台运行</span>
         </template>
       </div>
       <button

@@ -12,12 +12,14 @@ import {
   Plus,
   Refresh,
   Sunny,
+  Ticket,
 } from "@element-plus/icons-vue";
 import SidebarPanel from "./components/SidebarPanel.vue";
 import SummaryCards from "./components/SummaryCards.vue";
 import TargetTable from "./components/TargetTable.vue";
 import DeleteDialog from "./components/DeleteDialog.vue";
 import RustEnvironmentPage from "./components/RustEnvironmentPage.vue";
+import TasksPage from "./components/TasksPage.vue";
 import UpdateBanner from "./components/UpdateBanner.vue";
 import UpdateDialog from "./components/UpdateDialog.vue";
 import {
@@ -29,6 +31,12 @@ import {
 } from "./composables/useTheme";
 import { useUpdater } from "./composables/useUpdater";
 import { operationBusy } from "./composables/useOperationBusy";
+import {
+  activeTaskCount,
+  activeTasks,
+  hasRunningDeleteTask,
+  startTask,
+} from "./composables/useTasks";
 import {
   defaultScanRoots,
   deleteTargets,
@@ -76,7 +84,7 @@ const themeLabel = computed(() => {
   return `${modeLabel} · ${paletteLabel.value}`;
 });
 
-const activePage = ref<"targets" | "rust">("targets");
+const activePage = ref<"targets" | "rust" | "tasks">("targets");
 const rustInstalled = ref(false);
 const isMac = /Mac/i.test(navigator.userAgent);
 const pageTitle = computed(
@@ -84,6 +92,7 @@ const pageTitle = computed(
     ({
       targets: "空间总览",
       rust: "Rust 环境",
+      tasks: "任务中心",
     })[activePage.value],
 );
 const mainRef = ref<HTMLElement | null>(null);
@@ -94,7 +103,7 @@ const search = ref("");
 
 const loading = ref(true);
 const scanning = ref(false);
-const deleting = ref(false);
+const deleting = hasRunningDeleteTask;
 const hasScanned = ref(false);
 
 const lastScanAt = ref<number | null>(null);
@@ -127,9 +136,9 @@ let unlistenCloseBlocked: (() => void) | undefined;
 let updateTimer: number | undefined;
 
 watch(
-  operationBusy,
-  (value) => {
-    void setOperationActive(Boolean(value)).catch(() => {});
+  [operationBusy, activeTaskCount],
+  ([foreground, background]) => {
+    void setOperationActive(Boolean(foreground) || background > 0).catch(() => {});
   },
   { flush: "sync" },
 );
@@ -178,7 +187,9 @@ onMounted(async () => {
   if (isTauriRuntime()) {
     try {
       unlistenCloseBlocked = await listen("operation-close-blocked", () => {
-        ElMessage.warning("工具链操作进行中，请等待完成后再关闭应用");
+        ElMessage.warning(
+          "后台任务进行中，请等待完成或在任务中心取消后再关闭应用",
+        );
       });
     } catch {
       // The backend still prevents the close; only the warning is optional.
@@ -365,50 +376,66 @@ function requestDeleteAll() {
   requestDelete(targets.value);
 }
 
-async function confirmDelete() {
+function confirmDelete() {
   if (deleting.value || pendingDeletion.value.length === 0) {
     return;
   }
 
-  deleting.value = true;
   const pending = [...pendingDeletion.value];
+  const paths = pending.map((target) => target.path);
+  deleteDialogVisible.value = false;
+  pendingDeletion.value = [];
 
-  try {
-    const result = await deleteTargets(pending.map((target) => target.path));
-    const deletedKeys = new Set(result.deleted.map(pathKey));
-
-    if (result.deleted.length > 0) {
-      targets.value = targets.value.filter((target) => !deletedKeys.has(pathKey(target.path)));
-      selectedRows.value = selectedRows.value.filter(
-        (target) => !deletedKeys.has(pathKey(target.path)),
-      );
-      tableRef.value?.clearSelection();
-      deleteDialogVisible.value = false;
-
-      ElMessage.success(
-        `已释放 ${formatBytes(result.freedBytes)}，清理了 ${result.deleted.length} 个 target 目录`,
-      );
-    }
-
-    if (result.failures.length > 0) {
-      ElMessage.warning(
-        `${result.failures.length} 个目录未能删除：${result.failures[0].message}`,
-      );
-    }
-
-    if (result.deleted.length === 0 && result.failures.length > 0) {
-      return;
-    }
-
-    if (result.deleted.length === 0 && result.failures.length === 0) {
-      ElMessage.info("没有目录需要删除");
-      deleteDialogVisible.value = false;
-    }
-  } catch (error) {
-    ElMessage.error(`清理失败：${errorMessage(error)}`);
-  } finally {
-    deleting.value = false;
-  }
+  startTask({
+    kind: "delete",
+    title: `清理 ${pending.length} 个 target 目录`,
+    detail: pending
+      .slice(0, 3)
+      .map((target) => target.projectName)
+      .join("、"),
+    page: "targets",
+    run: (taskId) => deleteTargets(paths, taskId),
+    onFinished: (result, error) => {
+      if (error) {
+        ElMessage.error(`清理失败：${errorMessage(error)}`);
+        return;
+      }
+      if (!result) {
+        return;
+      }
+      const deletedKeys = new Set(result.deleted.map(pathKey));
+      if (result.deleted.length > 0) {
+        targets.value = targets.value.filter(
+          (target) => !deletedKeys.has(pathKey(target.path)),
+        );
+        selectedRows.value = selectedRows.value.filter(
+          (target) => !deletedKeys.has(pathKey(target.path)),
+        );
+        tableRef.value?.clearSelection();
+      }
+      if (result.cancelled) {
+        ElMessage.info(
+          `清理已取消，已释放 ${formatBytes(result.freedBytes)}，清理了 ${result.deleted.length} 个目录`,
+        );
+      } else if (result.deleted.length > 0) {
+        ElMessage.success(
+          `已释放 ${formatBytes(result.freedBytes)}，清理了 ${result.deleted.length} 个 target 目录`,
+        );
+      }
+      if (result.failures.length > 0) {
+        ElMessage.warning(
+          `${result.failures.length} 个目录未能删除：${result.failures[0].message}`,
+        );
+      }
+      if (
+        !result.cancelled &&
+        result.deleted.length === 0 &&
+        result.failures.length === 0
+      ) {
+        ElMessage.info("没有目录需要删除");
+      }
+    },
+  });
 }
 
 function changeTheme(command: string) {
@@ -432,7 +459,7 @@ async function allowReadAccess() {
   }
 }
 
-function navigateTo(page: "targets" | "rust") {
+function navigateTo(page: "targets" | "rust" | "tasks") {
   if (operationBusy.value && page !== activePage.value) {
     ElMessage.warning("Rust 操作进行中，请等待完成后再切换页面");
     return;
@@ -539,6 +566,16 @@ function uniqueRoots(list: string[]): string[] {
         >
           Rust 环境
         </button>
+        <button
+          type="button"
+          :class="{ active: activePage === 'tasks' }"
+          @click="navigateTo('tasks')"
+        >
+          任务中心
+          <span v-if="activeTaskCount > 0" class="minimal-task-count">
+            {{ activeTaskCount }}
+          </span>
+        </button>
       </nav>
       <div class="minimal-meta">
         <span>{{ pageTitle }}</span>
@@ -557,6 +594,7 @@ function uniqueRoots(list: string[]): string[] {
       :checking-updates="checkingUpdates"
       :active-page="activePage"
       :rust-installed="rustInstalled"
+      :task-count="activeTaskCount"
       :is-mac="isMac"
       @add="addRoots"
       @remove="removeRoot"
@@ -848,10 +886,11 @@ function uniqueRoots(list: string[]): string[] {
           </template>
 
           <RustEnvironmentPage
-            v-else
+            v-else-if="activePage === 'rust'"
             :rust-installed="rustInstalled"
             @rust-state="updateRustInstallationState"
           />
+          <TasksPage v-else />
         </div>
       </Transition>
 
@@ -867,6 +906,47 @@ function uniqueRoots(list: string[]): string[] {
         </span>
       </footer>
     </main>
+
+    <Transition name="task-dock">
+      <aside
+        v-if="activeTasks.length > 0 && activePage !== 'tasks'"
+        class="task-dock"
+      >
+        <button
+          type="button"
+          class="task-dock-main"
+          @click="navigateTo('tasks')"
+        >
+          <span class="task-dock-head">
+            <i class="task-dock-dot" />
+            {{ activeTasks.length }} 个后台任务
+            <strong>{{ activeTasks[0].percent }}%</strong>
+          </span>
+          <span class="task-dock-title">{{ activeTasks[0].title }}</span>
+          <span class="task-dock-message">
+            {{ activeTasks[0].message }}
+          </span>
+          <el-progress
+            :percentage="activeTasks[0].percent"
+            :show-text="false"
+            :stroke-width="4"
+            :indeterminate="
+              activeTasks[0].percent === 0 &&
+              activeTasks[0].status !== 'cancelling'
+            "
+            :duration="1.8"
+          />
+        </button>
+        <button
+          type="button"
+          class="task-dock-open"
+          @click="navigateTo('tasks')"
+        >
+          任务中心
+          <el-icon><Ticket /></el-icon>
+        </button>
+      </aside>
+    </Transition>
 
     <DeleteDialog
       v-model="deleteDialogVisible"

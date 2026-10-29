@@ -6,6 +6,7 @@ import type {
   CargoHomeMigrationResult,
   CargoHomeStatus,
   CargoSourceStatus,
+  CleanupReport,
   DeleteResult,
   LatestRustVersions,
   RustInstallationProbe,
@@ -68,14 +69,48 @@ export async function scanTargets(roots: string[]): Promise<ScanResult> {
   return invoke<ScanResult>("scan_targets", { roots });
 }
 
-export async function deleteTargets(paths: string[]): Promise<DeleteResult> {
+export async function deleteTargets(
+  paths: string[],
+  taskId: string,
+): Promise<DeleteResult> {
   if (isDemoMode()) {
     return demoDelete(paths);
   }
   if (!isTauriRuntime()) {
     throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
   }
-  return invoke<DeleteResult>("delete_targets", { paths });
+  return invoke<DeleteResult>("delete_targets", { paths, taskId });
+}
+
+export async function cancelBackgroundTask(taskId: string): Promise<boolean> {
+  if (isDemoMode() || !isTauriRuntime()) {
+    return false;
+  }
+  return invoke<boolean>("cancel_background_task", { taskId });
+}
+
+export async function cleanupTaskArtifacts(
+  startedAtMs: number,
+  kind: string,
+): Promise<CleanupReport> {
+  if (isDemoMode()) {
+    return {
+      removedFiles: 0,
+      freedBytes: 0,
+      skipped: false,
+      message:
+        kind === "delete"
+          ? "空间清理任务没有下载缓存等中间文件"
+          : "演示模式没有需要清理的临时文件",
+    };
+  }
+  if (!isTauriRuntime()) {
+    throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
+  }
+  return invoke<CleanupReport>("cleanup_task_artifacts", {
+    startedAtMs,
+    kind,
+  });
 }
 
 export async function detectCargoSource(): Promise<CargoSourceStatus> {
@@ -231,14 +266,16 @@ export async function setRustupPath(path: string): Promise<RustToolchainStatus> 
   return invoke<RustToolchainStatus>("set_rustup_path", { path });
 }
 
-export async function installRustup(): Promise<RustToolchainOperationResult> {
+export async function installRustup(
+  taskId: string,
+): Promise<RustToolchainOperationResult> {
   if (isDemoMode()) {
     return demoInstallRustup();
   }
   if (!isTauriRuntime()) {
     throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
   }
-  return invoke<RustToolchainOperationResult>("install_rustup");
+  return invoke<RustToolchainOperationResult>("install_rustup", { taskId });
 }
 
 export async function openPrivacySettings(): Promise<void> {
@@ -272,6 +309,7 @@ export async function checkRustToolchainLatest(): Promise<LatestRustVersions> {
 }
 
 export async function installRustToolchain(
+  taskId: string,
   target: string,
   setDefault = false,
 ): Promise<RustToolchainOperationResult> {
@@ -282,12 +320,14 @@ export async function installRustToolchain(
     throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
   }
   return invoke<RustToolchainOperationResult>("install_rust_toolchain", {
+    taskId,
     target,
     setDefault,
   });
 }
 
 export async function uninstallRustToolchain(
+  taskId: string,
   target: string,
 ): Promise<RustToolchainOperationResult> {
   if (isDemoMode()) {
@@ -297,6 +337,7 @@ export async function uninstallRustToolchain(
     throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
   }
   return invoke<RustToolchainOperationResult>("uninstall_rust_toolchain", {
+    taskId,
     target,
   });
 }
@@ -316,6 +357,7 @@ export async function setDefaultRustToolchain(
 }
 
 export async function updateRustToolchain(
+  taskId: string,
   target: string | null = null,
 ): Promise<RustToolchainOperationResult> {
   if (isDemoMode()) {
@@ -325,6 +367,7 @@ export async function updateRustToolchain(
     throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
   }
   return invoke<RustToolchainOperationResult>("update_rust_toolchain", {
+    taskId,
     target,
   });
 }
