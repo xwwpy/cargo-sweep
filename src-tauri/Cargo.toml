@@ -1,6 +1,6 @@
 [package]
 name = "cargo-sweep"
-version = "0.7.5"
+version = "0.7.6"
 description = "Discover and reclaim disk space used by Rust Cargo target directories"
 authors = ["Cargo Sweep"]
 edition = "2021"

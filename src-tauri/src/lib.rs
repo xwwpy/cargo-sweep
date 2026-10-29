@@ -164,13 +164,19 @@ async fn delete_targets(
 }
 
 #[tauri::command]
-fn cancel_background_task(task_id: String) -> bool {
-    background::cancel(&task_id)
+async fn cancel_background_task(task_id: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || background::cancel(&task_id))
+        .await
+        .map_err(|error| format!("取消任务异常退出：{error}"))
 }
 
 #[tauri::command]
-fn cleanup_task_artifacts(started_at_ms: u64, kind: String) -> CleanupReport {
-    background::cleanup_artifacts(started_at_ms, &kind)
+async fn cleanup_task_artifacts(started_at_ms: u64, kind: String) -> Result<CleanupReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        background::cleanup_artifacts(started_at_ms, &kind)
+    })
+    .await
+    .map_err(|error| format!("清理临时文件异常退出：{error}"))
 }
 
 #[tauri::command]

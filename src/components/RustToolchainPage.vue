@@ -3,6 +3,10 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { listen } from "@tauri-apps/api/event";
 import { formatBytes } from "../lib/format";
+import {
+  getCachedRustLatest,
+  setCachedRustLatest,
+} from "../lib/rustLatestCache";
 import { operationBusy as busy } from "../composables/useOperationBusy";
 import {
   hasActiveResource,
@@ -79,11 +83,12 @@ const emit = defineEmits<{
   "rust-state": [installed: boolean];
 }>();
 
+const cachedLatest = getCachedRustLatest();
 const status = ref<RustToolchainStatus | null>(null);
-const latest = ref<LatestRustVersions | null>(null);
-const latestError = ref<string | null>(null);
+const latest = ref<LatestRustVersions | null>(cachedLatest);
+const latestError = ref<string | null>(cachedLatest?.error ?? null);
 const loading = ref(true);
-const latestLoading = ref(true);
+const latestLoading = ref(!cachedLatest);
 const error = ref<string | null>(null);
 const actionOutput = ref<string | null>(null);
 const actionSuccess = ref<boolean | null>(null);
@@ -164,13 +169,8 @@ const currentIsLatest = computed(() => {
   if (!current?.installed || !current.latest) {
     return null;
   }
-  return sameVersion(current.currentFull, `rustc ${current.latest.version}`);
+  return sameRelease(current.currentRelease, current.latestRelease);
 });
-const currentIsNewBuild = computed(
-  () =>
-    currentIsLatest.value === false &&
-    currentChannel.value?.currentRelease === currentChannel.value?.latestRelease,
-);
 const historyOptions = computed(() => latest.value?.historicalVersions ?? []);
 const installedToolchains = computed(() => status.value?.toolchains ?? []);
 const busyLabel = computed(() => {
@@ -454,7 +454,7 @@ function channelView(
     label: key === "stable" ? "Stable" : "Nightly",
     installed: Boolean(info?.installed),
     toolchain: info?.toolchain ?? null,
-    currentRelease: safeVersion(info?.release),
+    currentRelease: safeVersion(info?.release) ?? safeVersion(currentFull),
     currentFull,
     currentBuild: buildLabel(currentFull, null),
     latest: latestInfo,
@@ -463,8 +463,11 @@ function channelView(
       ? buildLabel(`rustc ${latestInfo.version}`, latestInfo.date)
       : null,
     updateAvailable:
-      info?.installed && latestInfo && currentFull
-        ? !sameVersion(currentFull, `rustc ${latestInfo.version}`)
+      info?.installed && latestInfo
+        ? !sameRelease(
+            safeVersion(info.release) ?? safeVersion(currentFull),
+            safeVersion(latestInfo.release),
+          )
         : null,
     active: Boolean(info?.active),
     default: Boolean(info?.default),
@@ -610,19 +613,19 @@ async function copyText(value: string) {
   ElMessage.success("命令已复制");
 }
 
-function sameVersion(left: string | null, right: string | null): boolean {
+function sameRelease(left: string | null, right: string | null): boolean {
   if (!left || !right) {
     return false;
   }
-  return versionIdentity(left) === versionIdentity(right);
+  return releaseIdentity(left) === releaseIdentity(right);
 }
 
-function versionIdentity(value: string): string {
-  const build = value.match(/\(([0-9a-f]+)\s+(\d{4}-\d{2}-\d{2})\)/i);
-  if (build) {
-    return `${build[1].toLowerCase()} ${build[2]}`;
-  }
-  return value.replace(/^rustc\s+/, "").trim();
+function releaseIdentity(value: string): string {
+  return value
+    .replace(/^rustc\s+/i, "")
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .trim()
+    .toLowerCase();
 }
 
 function buildLabel(
@@ -657,9 +660,6 @@ function channelState(view: ChannelView): string {
   }
   if (view.updateAvailable === false) {
     return "已是最新";
-  }
-  if (view.currentRelease === view.latestRelease) {
-    return `有新构建${view.latestBuild ? ` · ${view.latestBuild}` : ""}`;
   }
   return `可更新到 ${view.latestRelease}`;
 }
@@ -718,10 +718,22 @@ async function refreshLatestVersions(): Promise<LatestRustVersions> {
   const next = await checkRustToolchainLatest();
   latest.value = next;
   latestError.value = next.error;
+  if (!next.error) {
+    setCachedRustLatest(next);
+  }
   return next;
 }
 
-async function loadLatest() {
+async function loadLatest(force = false) {
+  if (!force) {
+    const cached = getCachedRustLatest();
+    if (cached) {
+      latest.value = cached;
+      latestError.value = cached.error;
+      latestLoading.value = false;
+      return;
+    }
+  }
   latestLoading.value = true;
   latestError.value = null;
   try {
@@ -757,7 +769,7 @@ function isChannelAtLatest(
   return Boolean(
     current?.installed &&
       target &&
-      sameVersion(current.rustcVersion, `rustc ${target.version}`),
+      sameRelease(current.release ?? current.rustcVersion, target.release),
   );
 }
 
@@ -923,7 +935,7 @@ async function applySource() {
   }
 }
 
-async function load() {
+async function load(forceLatest = false) {
   loading.value = true;
   error.value = null;
   void loadCargoHome();
@@ -933,12 +945,16 @@ async function load() {
     rustupPathInput.value =
       status.value.rustupCustomPath ?? status.value.rustupPath ?? "";
     emit("rust-state", status.value.installed);
-    void loadLatest();
+    void loadLatest(forceLatest);
   } catch (reason) {
     error.value = errorMessage(reason);
   } finally {
     loading.value = false;
   }
+}
+
+function reloadAll() {
+  void load(true);
 }
 
 async function runOperation(
@@ -1296,6 +1312,9 @@ async function updateChannel(view: ChannelView) {
     status.value = freshStatus;
     latest.value = freshLatest;
     latestError.value = freshLatest.error;
+    if (!freshLatest.error) {
+      setCachedRustLatest(freshLatest);
+    }
     const target = latestChannelVersion(freshLatest, view.key);
     if (!target) {
       actionOutput.value = "无法获取最新版本，已取消更新。";
@@ -1421,7 +1440,7 @@ async function installCustom() {
 }
 
 function retryLatest() {
-  void loadLatest();
+  void loadLatest(true);
 }
 
 onMounted(() => {
@@ -1478,7 +1497,7 @@ onUnmounted(() => {
         <h1>工具链，<span>版本一目了然。</span></h1>
         <p>查看当前版本与最新版本，按需安装、更新或切换。</p>
       </div>
-      <el-button class="refresh-button" :loading="loading || latestLoading" @click="load">
+      <el-button class="refresh-button" :loading="loading || latestLoading" @click="reloadAll">
         <el-icon v-if="!loading && !latestLoading"><Refresh /></el-icon>
         重新检测
       </el-button>
@@ -1489,7 +1508,7 @@ onUnmounted(() => {
         <span class="section-kicker">TOOLCHAINS</span>
         <h2>版本与工具链</h2>
       </div>
-      <el-button class="refresh-button" :loading="loading || latestLoading" @click="load">
+      <el-button class="refresh-button" :loading="loading || latestLoading" @click="reloadAll">
         <el-icon v-if="!loading && !latestLoading"><Refresh /></el-icon>
         重新检测
       </el-button>
@@ -1501,7 +1520,7 @@ onUnmounted(() => {
         <h3>无法读取 Rust 工具链</h3>
         <p>{{ error }}</p>
       </div>
-      <el-button class="retry-button" @click="load">重试</el-button>
+      <el-button class="retry-button" @click="reloadAll">重试</el-button>
     </div>
 
     <div v-else-if="loading && !status" class="toolchain-loading">
@@ -1684,7 +1703,7 @@ onUnmounted(() => {
           <small v-if="latestBuild">{{ latestBuild }}</small>
           <em v-if="currentIsLatest === true">已是最新</em>
           <em v-else-if="currentIsLatest === false" class="update-hint">
-            {{ currentIsNewBuild ? "有新构建" : "有新版本" }}
+            有新版本
           </em>
         </div>
       </section>
