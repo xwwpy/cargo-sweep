@@ -2046,6 +2046,15 @@ html.dark #app .minimal .current-latest strong {
   white-space: nowrap;
 }
 
+.task-dock-component {
+  overflow: hidden;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 7.5px;
+  color: var(--accent-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .task-dock-speed {
   font-size: 7.5px;
   color: var(--accent-1);

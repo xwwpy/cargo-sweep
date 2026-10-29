@@ -36,6 +36,7 @@ import {
   activeTasks,
   hasRunningDeleteTask,
   startTask,
+  taskCurrentComponent,
   taskHasDeterminateProgress,
   taskSupportsNetwork,
 } from "./composables/useTasks";
@@ -937,6 +938,20 @@ function uniqueRoots(list: string[]): string[] {
           <span class="task-dock-title">{{ activeTasks[0].title }}</span>
           <span class="task-dock-message">
             {{ activeTasks[0].message }}
+          </span>
+          <span
+            v-if="taskCurrentComponent(activeTasks[0])"
+            class="task-dock-component"
+          >
+            {{ taskCurrentComponent(activeTasks[0])?.name }}
+            <template
+              v-if="
+                taskCurrentComponent(activeTasks[0])?.phase === 'downloading' &&
+                (taskCurrentComponent(activeTasks[0])?.totalBytes ?? 0) > 0
+              "
+            >
+              · {{ taskCurrentComponent(activeTasks[0])?.percent }}%
+            </template>
           </span>
           <span
             v-if="taskSupportsNetwork(activeTasks[0])"

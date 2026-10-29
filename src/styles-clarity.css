@@ -649,7 +649,8 @@ html.dark #app .latest-warning.exhausted {
   font-size: 10.5px;
 }
 
-#app .task-dock-speed {
+#app .task-dock-speed,
+#app .task-dock-component {
   font-size: 9.5px;
 }
 

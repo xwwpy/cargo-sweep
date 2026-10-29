@@ -80,15 +80,37 @@ export function hasActiveResource(resourceKey: string): boolean {
 }
 
 export function taskHasDeterminateProgress(task: BackgroundTask): boolean {
-  return (
-    task.progressMode === "determinate" &&
-    task.phase !== "verify" &&
-    task.phase !== "queued"
-  );
+  if (
+    task.progressMode !== "determinate" ||
+    task.phase === "verify" ||
+    task.phase === "queued"
+  ) {
+    return false;
+  }
+  if (task.phase === "download") {
+    return (
+      task.percent > 0 ||
+      task.components.some((component) => component.totalBytes > 0)
+    );
+  }
+  return true;
 }
 
 export function taskSupportsNetwork(task: BackgroundTask): boolean {
   return task.kind === "toolchain" || task.kind === "rustup";
+}
+
+export function taskCurrentComponent(
+  task: BackgroundTask,
+): BackgroundTask["components"][number] | null {
+  return (
+    task.components.find(
+      (component) =>
+        component.phase === "downloading" || component.phase === "installing",
+    ) ??
+    task.components[task.components.length - 1] ??
+    null
+  );
 }
 
 function createId(): string {

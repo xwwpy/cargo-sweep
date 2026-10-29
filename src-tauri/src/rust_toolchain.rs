@@ -86,6 +86,8 @@ pub struct ComponentProgress {
     pub percent: u8,
     pub elapsed_ms: u64,
     pub speed_bps: u64,
+    pub downloaded_bytes: u64,
+    pub total_bytes: u64,
     pub indeterminate: bool,
 }
 
@@ -362,7 +364,14 @@ where
     let mut progress = RustupProgress::new(monitor.meter());
     let (mut success, mut text) = run_streaming(
         "rustup",
-        &["toolchain", "install", &target, "--profile", "default"],
+        &[
+            "-v",
+            "toolchain",
+            "install",
+            &target,
+            "--profile",
+            "default",
+        ],
         |line| {
             on_progress(progress.observe(line));
         },
@@ -376,7 +385,14 @@ where
         let mut fallback_progress = RustupProgress::new(monitor.meter());
         let (fallback_success, fallback_text) = run_streaming_with_env(
             "rustup",
-            &["toolchain", "install", &target, "--profile", "default"],
+            &[
+                "-v",
+                "toolchain",
+                "install",
+                &target,
+                "--profile",
+                "default",
+            ],
             &["RUSTUP_DIST_SERVER", "RUSTUP_UPDATE_ROOT"],
             |line| {
                 on_progress(fallback_progress.observe(line));
@@ -455,7 +471,7 @@ where
         .or_else(|| before.default_toolchain.clone());
 
     on_progress(OperationProgress::new(2, "检查工具链更新"));
-    let mut args = vec!["update", "--no-self-update"];
+    let mut args = vec!["-v", "update", "--no-self-update"];
     if let Some(toolchain) = toolchain.as_deref() {
         args.push(toolchain);
     }
@@ -558,7 +574,14 @@ where
     let mut progress = RustupProgress::new(Arc::new(Mutex::new(DownloadMeter::default())));
     let install_result = run_streaming(
         "rustup",
-        &["toolchain", "install", toolchain, "--profile", "default"],
+        &[
+            "-v",
+            "toolchain",
+            "install",
+            toolchain,
+            "--profile",
+            "default",
+        ],
         |line| {
             on_progress(progress.observe(line));
         },
@@ -1336,27 +1359,28 @@ impl DownloadMonitor {
         let thread_meter = Arc::clone(&meter);
         let thread_stop = Arc::clone(&stop);
         let thread = thread::spawn(move || {
-            let mut last_bytes = downloaded_bytes();
+            let baseline = downloaded_bytes();
+            let mut last_total = baseline;
             let mut last_time = Instant::now();
             while !thread_stop.load(Ordering::Relaxed) {
                 thread::sleep(Duration::from_millis(250));
-                let bytes = downloaded_bytes();
+                let total = downloaded_bytes();
                 let now = Instant::now();
                 let elapsed = now.duration_since(last_time);
                 let speed = if elapsed.as_secs_f64() > 0.0 {
-                    ((bytes.saturating_sub(last_bytes)) as f64 / elapsed.as_secs_f64()) as u64
+                    ((total.saturating_sub(last_total)) as f64 / elapsed.as_secs_f64()) as u64
                 } else {
                     0
                 };
                 if let Ok(mut meter) = thread_meter.lock() {
-                    meter.bytes = bytes;
+                    meter.bytes = total.saturating_sub(baseline);
                     if speed > 0 {
                         meter.speed_bps = speed;
                     } else if elapsed.as_secs() >= 2 {
                         meter.speed_bps = 0;
                     }
                 }
-                last_bytes = bytes;
+                last_total = total;
                 last_time = now;
             }
         });
@@ -1407,6 +1431,43 @@ struct TrackedComponent {
     started: Option<Instant>,
     elapsed_ms: u64,
     speed_bps: u64,
+    start_meter_bytes: u64,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+}
+
+fn remote_content_size(url: &str) -> Option<u64> {
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(5))
+        .user_agent(format!("cargo-sweep/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .ok()?;
+    if let Some(size) = client
+        .head(url)
+        .send()
+        .ok()
+        .filter(|response| response.status().is_success())
+        .and_then(|response| response.content_length())
+    {
+        return Some(size);
+    }
+    let response = client
+        .get(url)
+        .header(reqwest::header::RANGE, "bytes=0-0")
+        .header(reqwest::header::ACCEPT_ENCODING, "identity")
+        .send()
+        .ok()?;
+    if let Some(total) = response
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.rsplit('/').next())
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        return Some(total);
+    }
+    response.content_length()
 }
 
 struct RustupProgress {
@@ -1450,6 +1511,28 @@ impl RustupProgress {
             return self.snapshot(None);
         }
         let lower = clean.to_ascii_lowercase();
+        if lower.contains("downloading file url=") {
+            if let Some(url) = clean.split("downloading file url=").nth(1) {
+                let url = url.trim();
+                if url.ends_with(".tar.xz") || url.ends_with(".tar.gz") || url.ends_with(".tar.zst")
+                {
+                    if let Some(component) = self
+                        .components
+                        .iter_mut()
+                        .rev()
+                        .find(|component| component.phase == "downloading")
+                    {
+                        if component.total_bytes.is_none() {
+                            component.total_bytes = remote_content_size(url);
+                        }
+                    }
+                }
+            }
+            return self.snapshot(None);
+        }
+        if lower.starts_with("debug:") {
+            return self.snapshot(None);
+        }
         if lower.contains("syncing channel updates") {
             self.phase = "verify".into();
             self.percent = self.percent.max(8);
@@ -1468,6 +1551,9 @@ impl RustupProgress {
                 started: Some(Instant::now()),
                 elapsed_ms: 0,
                 speed_bps: 0,
+                start_meter_bytes: self.meter_values().bytes,
+                downloaded_bytes: 0,
+                total_bytes: None,
             });
         } else if lower.contains("installing component") {
             self.finish_downloading();
@@ -1494,6 +1580,9 @@ impl RustupProgress {
                     started: Some(Instant::now()),
                     elapsed_ms: 0,
                     speed_bps: 0,
+                    start_meter_bytes: self.meter_values().bytes,
+                    downloaded_bytes: 0,
+                    total_bytes: None,
                 });
             }
         } else if lower.contains("default toolchain set") {
@@ -1528,12 +1617,16 @@ impl RustupProgress {
 
     fn finish_downloading(&mut self) {
         let now = Instant::now();
-        let speed = self.meter_values().speed_bps;
+        let meter = self.meter_values();
+        let speed = meter.speed_bps;
         for component in &mut self.components {
             if component.phase == "downloading" {
                 component.phase = "done".into();
                 component.percent = 100;
                 component.speed_bps = speed;
+                component.downloaded_bytes = component
+                    .total_bytes
+                    .unwrap_or_else(|| meter.bytes.saturating_sub(component.start_meter_bytes));
                 if let Some(started) = component.started {
                     component.elapsed_ms = now.duration_since(started).as_millis() as u64;
                 }
@@ -1543,15 +1636,43 @@ impl RustupProgress {
 
     fn mark_all_done(&mut self) {
         let now = Instant::now();
+        let meter = self.meter_values();
         for component in &mut self.components {
             if component.phase != "done" {
                 component.phase = "done".into();
                 component.percent = 100;
+                component.downloaded_bytes = component
+                    .total_bytes
+                    .unwrap_or_else(|| meter.bytes.saturating_sub(component.start_meter_bytes));
                 if let Some(started) = component.started {
                     component.elapsed_ms = now.duration_since(started).as_millis() as u64;
                 }
             }
         }
+    }
+
+    fn known_download_percent(&self, meter_bytes: u64) -> Option<u8> {
+        let mut total = 0u64;
+        let mut downloaded = 0u64;
+        for component in &self.components {
+            let Some(component_total) = component.total_bytes else {
+                continue;
+            };
+            total = total.saturating_add(component_total);
+            let component_downloaded =
+                if component.phase == "done" || component.phase == "installing" {
+                    component_total
+                } else {
+                    meter_bytes
+                        .saturating_sub(component.start_meter_bytes)
+                        .min(component_total)
+                };
+            downloaded = downloaded.saturating_add(component_downloaded);
+        }
+        if total == 0 {
+            return None;
+        }
+        Some(((downloaded.saturating_mul(100) / total) as u8).min(99))
     }
 
     fn finish(&mut self, message: &str) -> OperationProgress {
@@ -1565,6 +1686,7 @@ impl RustupProgress {
     fn snapshot(&self, line: Option<String>) -> OperationProgress {
         let now = Instant::now();
         let meter = self.meter_values();
+        let aggregate_percent = self.known_download_percent(meter.bytes);
         let components = self
             .components
             .iter()
@@ -1578,22 +1700,51 @@ impl RustupProgress {
                 } else {
                     component.elapsed_ms
                 };
+                let total_bytes = component.total_bytes.unwrap_or(0);
+                let measured = meter.bytes.saturating_sub(component.start_meter_bytes);
+                let downloaded_bytes = if total_bytes > 0 {
+                    if component.phase == "done" || component.phase == "installing" {
+                        total_bytes
+                    } else {
+                        measured.min(total_bytes)
+                    }
+                } else {
+                    component.downloaded_bytes.max(measured)
+                };
+                let percent = if total_bytes > 0 {
+                    downloaded_bytes
+                        .saturating_mul(100)
+                        .checked_div(total_bytes)
+                        .unwrap_or(0)
+                        .min(100) as u8
+                } else {
+                    component.percent
+                };
                 ComponentProgress {
                     name: component.name.clone(),
                     phase: component.phase.clone(),
-                    percent: component.percent,
+                    percent,
                     elapsed_ms,
                     speed_bps: if component.phase == "downloading" {
                         meter.speed_bps
                     } else {
                         component.speed_bps
                     },
-                    indeterminate: component.phase == "downloading",
+                    downloaded_bytes,
+                    total_bytes,
+                    indeterminate: component.phase == "downloading" && total_bytes == 0,
                 }
             })
             .collect();
+        let percent = match self.phase.as_str() {
+            "done" => 100,
+            "verify" | "queued" => 0,
+            "download" => aggregate_percent.unwrap_or(0),
+            "install" | "finalize" => aggregate_percent.unwrap_or(99).min(99),
+            _ => self.percent,
+        };
         OperationProgress {
-            percent: self.percent,
+            percent,
             message: self.message.clone(),
             phase: self.phase.clone(),
             line,
@@ -1698,8 +1849,10 @@ where
                     continue;
                 }
                 on_line(&line);
-                text.push_str(&line);
-                text.push('\n');
+                if !line.trim_start().starts_with("debug:") {
+                    text.push_str(&line);
+                    text.push('\n');
+                }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => on_line(""),
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -1938,15 +2091,13 @@ LLVM version: 23.1.1";
     #[test]
     fn parses_download_progress_from_rustup_output() {
         let mut progress = RustupProgress::new(Arc::new(Mutex::new(DownloadMeter::default())));
-        assert_eq!(
-            progress
-                .observe("info: syncing channel updates for 'stable-x86_64-pc-windows-msvc'")
-                .percent,
-            8
-        );
+        let syncing =
+            progress.observe("info: syncing channel updates for 'stable-x86_64-pc-windows-msvc'");
+        assert_eq!(syncing.percent, 0);
+        assert_eq!(syncing.phase, "verify");
         let download = progress.observe("info: downloading component 'rustc'");
         assert!(download.message.contains("rustc"));
-        assert!(download.percent > 8);
+        assert_eq!(download.percent, 0);
         assert_eq!(download.components[0].phase, "downloading");
         let json = serde_json::to_value(&download).unwrap();
         assert_eq!(json["components"][0]["name"], "rustc");
@@ -1959,7 +2110,7 @@ LLVM version: 23.1.1";
             progress
                 .observe("info: default toolchain set to 'stable'")
                 .percent,
-            96
+            99
         );
         let line = progress.observe("unrelated output");
         assert_eq!(line.line.as_deref(), Some("unrelated output"));

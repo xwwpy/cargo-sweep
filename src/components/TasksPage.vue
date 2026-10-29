@@ -264,7 +264,23 @@ function isActive(task: BackgroundTask): boolean {
                 }"
               />
             </div>
-            <small>{{ componentPhaseLabel(component.phase) }}</small>
+            <small
+              :title="
+                component.totalBytes > 0
+                  ? `${formatBytes(component.downloadedBytes)} / ${formatBytes(component.totalBytes)}`
+                  : ''
+              "
+            >
+              {{ componentPhaseLabel(component.phase) }}
+              <template
+                v-if="
+                  component.phase === 'downloading' &&
+                  component.totalBytes > 0
+                "
+              >
+                {{ component.percent }}%
+              </template>
+            </small>
           </div>
         </div>
 
@@ -621,7 +637,7 @@ function isActive(task: BackgroundTask): boolean {
 
 .task-component {
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr) 48px;
+  grid-template-columns: 100px minmax(0, 1fr) 86px;
   gap: 7px;
   align-items: center;
 }

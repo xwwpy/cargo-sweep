@@ -12,6 +12,7 @@ import {
   activeTasks,
   hasActiveResource,
   startTask,
+  taskCurrentComponent,
 } from "../composables/useTasks";
 import {
   CircleCheck,
@@ -120,6 +121,11 @@ const activeInstallTask = computed(
         task.kind === "toolchain" &&
         (task.status === "running" || task.status === "cancelling"),
     ) ?? null,
+);
+const activeInstallComponent = computed(() =>
+  activeInstallTask.value
+    ? taskCurrentComponent(activeInstallTask.value)
+    : null,
 );
 const toolchainSectionTitle = computed(
   () =>
@@ -1394,7 +1400,9 @@ async function installChannel(view: ChannelView) {
   runBackgroundToolchain({
     kind: "toolchain",
     title: `安装 ${view.label} 工具链`,
-    detail: "下载组件并安装到 RUSTUP_HOME",
+    detail: view.currentRelease
+      ? `当前 ${view.currentRelease} · 下载组件并安装到 RUSTUP_HOME`
+      : "下载组件并安装到 RUSTUP_HOME",
     successMessage: `${view.label} 工具链已安装`,
     resourceKey: toolchainResource(view.key),
     run: (taskId) => installRustToolchain(taskId, view.key, setDefault),
@@ -1456,7 +1464,9 @@ async function updateChannel(view: ChannelView) {
   runBackgroundToolchain({
     kind: "toolchain",
     title: `更新 ${view.label} 工具链`,
-    detail: "后台下载并安装缺失的组件",
+    detail: `当前 ${view.currentRelease || "未知"} → 最新 ${
+      view.latestRelease || "检测中"
+    }`,
     successMessage: `${view.label} 已更新到最新版本`,
     resourceKey: toolchainResource(view.key),
     run: (taskId) => updateRustToolchain(taskId, view.toolchain ?? view.key),
@@ -1529,7 +1539,7 @@ async function installHistory() {
   runBackgroundToolchain({
     kind: "toolchain",
     title: `安装 ${target}`,
-    detail: "安装历史版本工具链",
+    detail: `安装历史版本 ${target}`,
     successMessage: `${target} 工具链已安装`,
     resourceKey: toolchainResource(target),
     run: (taskId) => installRustToolchain(taskId, target, false),
@@ -1545,7 +1555,7 @@ async function installCustom() {
   runBackgroundToolchain({
     kind: "toolchain",
     title: `安装 ${target}`,
-    detail: "安装自定义版本工具链",
+    detail: `安装自定义版本 ${target}`,
     successMessage: `${target} 工具链已安装`,
     resourceKey: toolchainResource(target),
     run: (taskId) => installRustToolchain(taskId, target, false),
@@ -1744,6 +1754,17 @@ onUnmounted(() => {
           {{ activeInstallTask.title }}
         </span>
         <span class="network-strip-message">{{ activeInstallTask.message }}</span>
+        <span v-if="activeInstallComponent" class="network-strip-component">
+          {{ activeInstallComponent.name }}
+          <template
+            v-if="
+              activeInstallComponent.phase === 'downloading' &&
+              activeInstallComponent.totalBytes > 0
+            "
+          >
+            · {{ activeInstallComponent.percent }}%
+          </template>
+        </span>
         <span>
           当前速度
           <strong>{{ formatSpeed(activeInstallTask.speedBps) }}</strong>
@@ -2609,6 +2630,12 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.network-strip-component {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 10.5px;
+  color: var(--accent-2);
 }
 
 .toolchain-network-strip strong {

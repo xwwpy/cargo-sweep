@@ -188,6 +188,8 @@ export interface ComponentProgress {
   percent: number;
   elapsedMs: number;
   speedBps: number;
+  downloadedBytes: number;
+  totalBytes: number;
   indeterminate: boolean;
 }
 
