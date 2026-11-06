@@ -4,8 +4,14 @@ export interface TargetInfo {
   projectPath: string;
   sizeBytes: number;
   fileCount: number;
+  releaseBytes: number;
+  releaseFiles: number;
+  debugBytes: number;
+  debugFiles: number;
   modifiedMs: number | null;
 }
+
+export type DeleteScope = "all" | "release" | "debug";
 
 export interface ScanResult {
   targets: TargetInfo[];

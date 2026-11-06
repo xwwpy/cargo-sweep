@@ -122,6 +122,7 @@ async fn delete_targets(
     app: tauri::AppHandle,
     task_id: String,
     paths: Vec<String>,
+    scope: String,
 ) -> Result<DeleteResult, String> {
     if paths.is_empty() {
         return Err("没有选择要删除的 target 目录。".to_string());
@@ -129,6 +130,8 @@ async fn delete_targets(
     if paths.len() > 512 {
         return Err("一次最多删除 512 个 target 目录。".to_string());
     }
+    let scope = scanner::DeleteScope::parse(&scope)?;
+    let scope_label = scope.label();
 
     background::register(&task_id, "delete");
     let progress_task_id = task_id.clone();
@@ -137,6 +140,7 @@ async fn delete_targets(
         background::with_task(&task_id, || {
             scanner::delete_targets_with_progress(
                 paths,
+                scope,
                 background::current_cancelled,
                 |index, total, path| {
                     let percent = ((index * 100) / total.max(1)) as u8;
@@ -149,7 +153,7 @@ async fn delete_targets(
                         TaskProgressEvent::simple(
                             progress_task_id.clone(),
                             percent,
-                            format!("正在清理 {}/{}：{name}", index + 1, total),
+                            format!("正在清理{scope_label} {}/{}：{name}", index + 1, total),
                             "delete",
                         ),
                     );

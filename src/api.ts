@@ -8,6 +8,7 @@ import type {
   CargoSourceStatus,
   CleanupReport,
   DeleteResult,
+  DeleteScope,
   LatestRustVersions,
   RustInstallationProbe,
   RustToolchainOperationResult,
@@ -74,14 +75,15 @@ export async function scanTargets(roots: string[]): Promise<ScanResult> {
 export async function deleteTargets(
   paths: string[],
   taskId: string,
+  scope: DeleteScope = "all",
 ): Promise<DeleteResult> {
   if (isDemoMode()) {
-    return demoDelete(paths);
+    return demoDelete(paths, scope);
   }
   if (!isTauriRuntime()) {
     throw new Error("请通过 Tauri 桌面应用运行 Cargo Sweep");
   }
-  return invoke<DeleteResult>("delete_targets", { paths, taskId });
+  return invoke<DeleteResult>("delete_targets", { paths, taskId, scope });
 }
 
 export async function cancelBackgroundTask(taskId: string): Promise<boolean> {

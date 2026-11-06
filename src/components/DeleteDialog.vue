@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { Close, Delete, InfoFilled, WarningFilled } from "@element-plus/icons-vue";
-import type { TargetInfo } from "../types";
+import type { DeleteScope, TargetInfo } from "../types";
 import { cleanPath, formatBytes, formatCount } from "../lib/format";
 
 const props = defineProps<{
@@ -12,7 +12,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update:modelValue": [value: boolean];
-  confirm: [];
+  confirm: [scope: DeleteScope];
 }>();
 
 const visible = computed({
@@ -20,16 +20,101 @@ const visible = computed({
   set: (value: boolean) => emit("update:modelValue", value),
 });
 
-const totalBytes = computed(() =>
-  props.targets.reduce((total, target) => total + target.sizeBytes, 0),
+const scope = ref<DeleteScope>("all");
+
+const releaseAvailable = computed(() =>
+  props.targets.some((target) => target.releaseBytes > 0),
+);
+const debugAvailable = computed(() =>
+  props.targets.some((target) => target.debugBytes > 0),
 );
 
-const totalFiles = computed(() =>
-  props.targets.reduce((total, target) => total + target.fileCount, 0),
+const scopeOptions = computed(() => [
+  {
+    key: "all" as const,
+    label: "全部编译产物",
+    detail: "删除整个 target 目录",
+    bytes: props.targets.reduce((total, target) => total + target.sizeBytes, 0),
+    files: props.targets.reduce((total, target) => total + target.fileCount, 0),
+    disabled: props.targets.length === 0,
+  },
+  {
+    key: "release" as const,
+    label: "仅 release",
+    detail: "保留 debug 和 target 其他内容",
+    bytes: props.targets.reduce(
+      (total, target) => total + target.releaseBytes,
+      0,
+    ),
+    files: props.targets.reduce(
+      (total, target) => total + target.releaseFiles,
+      0,
+    ),
+    disabled: !releaseAvailable.value,
+  },
+  {
+    key: "debug" as const,
+    label: "仅 debug",
+    detail: "保留 release 和 target 其他内容",
+    bytes: props.targets.reduce(
+      (total, target) => total + target.debugBytes,
+      0,
+    ),
+    files: props.targets.reduce(
+      (total, target) => total + target.debugFiles,
+      0,
+    ),
+    disabled: !debugAvailable.value,
+  },
+]);
+
+const selectedBytes = computed(
+  () => scopeOptions.value.find((option) => option.key === scope.value)?.bytes ?? 0,
 );
+const totalFiles = computed(
+  () => scopeOptions.value.find((option) => option.key === scope.value)?.files ?? 0,
+);
+
+const scopeTitle = computed(() => {
+  if (scope.value === "release") return "仅清理 release 编译产物？";
+  if (scope.value === "debug") return "仅清理 debug 编译产物？";
+  return "确认清理这些构建缓存？";
+});
+
+const scopeLead = computed(() => {
+  if (scope.value === "release") {
+    return "只删除 target 下的 release 编译产物，debug 目录和 target 中的其他文件会保留。";
+  }
+  if (scope.value === "debug") {
+    return "只删除 target 下的 debug 编译产物，release 目录和 target 中的其他文件会保留。";
+  }
+  return "以下 target 目录将被永久删除。源码不受影响，但目录内的构建产物无法恢复。";
+});
+
+const scopeAction = computed(() => {
+  if (scope.value === "release") return "删除 release";
+  if (scope.value === "debug") return "删除 debug";
+  return "永久删除";
+});
+
+function targetScopeSize(target: TargetInfo): number {
+  if (scope.value === "release") return target.releaseBytes;
+  if (scope.value === "debug") return target.debugBytes;
+  return target.sizeBytes;
+}
 
 const previewTargets = computed(() => props.targets.slice(0, 4));
 const overflowCount = computed(() => Math.max(0, props.targets.length - 4));
+
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (!open) return;
+    scope.value = "all";
+    if (props.targets.length === 0) return;
+    if (!releaseAvailable.value && !debugAvailable.value) return;
+  },
+);
 
 function close() {
   if (!props.loading) {
@@ -72,10 +157,27 @@ function handleBeforeClose(done: () => void) {
         <el-icon><WarningFilled /></el-icon>
       </div>
 
-      <h2>确认清理这些构建缓存？</h2>
-      <p class="dialog-lead">
-        以下 target 目录将被永久删除。源码不受影响，但目录内的构建产物无法恢复。
-      </p>
+      <h2>{{ scopeTitle }}</h2>
+      <p class="dialog-lead">{{ scopeLead }}</p>
+
+      <div class="scope-options">
+        <button
+          v-for="option in scopeOptions"
+          :key="option.key"
+          type="button"
+          class="scope-option"
+          :class="{ active: scope === option.key }"
+          :disabled="option.disabled || loading"
+          @click="scope = option.key"
+        >
+          <span class="scope-radio" />
+          <span class="scope-copy">
+            <strong>{{ option.label }}</strong>
+            <small>{{ option.detail }}</small>
+          </span>
+          <span class="scope-size">{{ formatBytes(option.bytes) }}</span>
+        </button>
+      </div>
 
       <div class="delete-summary">
         <div class="summary-block">
@@ -86,7 +188,7 @@ function handleBeforeClose(done: () => void) {
         <div class="summary-divider" />
         <div class="summary-block">
           <span class="summary-label">预计释放</span>
-          <strong>{{ formatBytes(totalBytes) }}</strong>
+          <strong>{{ formatBytes(selectedBytes) }}</strong>
         </div>
         <div class="summary-divider" />
         <div class="summary-block">
@@ -100,7 +202,7 @@ function handleBeforeClose(done: () => void) {
         <div v-for="target in previewTargets" :key="target.path" class="preview-row">
           <span class="preview-name">{{ target.projectName }}</span>
           <span class="preview-path">{{ cleanPath(target.path) }}</span>
-          <span class="preview-size">{{ formatBytes(target.sizeBytes) }}</span>
+          <span class="preview-size">{{ formatBytes(targetScopeSize(target)) }}</span>
         </div>
         <div v-if="overflowCount > 0" class="preview-more">
           还有 {{ overflowCount }} 个 target 目录
@@ -109,7 +211,12 @@ function handleBeforeClose(done: () => void) {
 
       <div class="safety-note">
         <el-icon><InfoFilled /></el-icon>
-        <span>只会删除校验通过的 Cargo target，Cargo.toml、源码和 Git 记录都不会被修改。</span>
+        <span v-if="scope === 'all'">
+          只会删除校验通过的 Cargo target，Cargo.toml、源码和 Git 记录都不会被修改。
+        </span>
+        <span v-else>
+          只删除 {{ scope }} 编译目录，其他构建产物、Cargo.toml、源码和 Git 记录都会保留。
+        </span>
       </div>
     </div>
 
@@ -120,10 +227,10 @@ function handleBeforeClose(done: () => void) {
           type="danger"
           class="confirm-button"
           :loading="loading"
-          @click="$emit('confirm')"
+          @click="$emit('confirm', scope)"
         >
           <el-icon v-if="!loading"><Delete /></el-icon>
-          {{ loading ? "正在清理…" : "永久删除" }}
+          {{ loading ? "正在清理…" : scopeAction }}
         </el-button>
       </div>
     </template>
@@ -203,6 +310,85 @@ function handleBeforeClose(done: () => void) {
   font-size: 11.5px;
   line-height: 1.75;
   color: #667085;
+}
+
+.scope-options {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 13px;
+}
+
+.scope-option {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.scope-option:hover:not(:disabled) {
+  background: #f8fffd;
+  border-color: #b7ebe2;
+}
+
+.scope-option.active {
+  background: #f0fdfa;
+  border-color: #0f766e;
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.08);
+}
+
+.scope-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.scope-radio {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid #b8c2cc;
+  border-radius: 50%;
+}
+
+.scope-option.active .scope-radio {
+  border: 4px solid #0f766e;
+}
+
+.scope-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.scope-copy strong {
+  font-size: 11px;
+  font-weight: 650;
+  color: #344054;
+}
+
+.scope-copy small {
+  font-size: 9px;
+  color: #98a2b3;
+}
+
+.scope-size {
+  flex: 0 0 auto;
+  font-family: "Manrope Variable", "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  color: #0f766e;
+  font-variant-numeric: tabular-nums;
 }
 
 .delete-summary {

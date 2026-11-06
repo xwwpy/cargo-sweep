@@ -260,6 +260,14 @@ defineExpose({
                   <span>{{ cleanPath(row.path) }}</span>
                   <el-icon class="copy-icon"><DocumentCopy /></el-icon>
                 </button>
+                <div class="scope-badges">
+                  <span v-if="row.releaseBytes > 0" class="scope-badge release">
+                    release {{ formatBytes(row.releaseBytes) }}
+                  </span>
+                  <span v-if="row.debugBytes > 0" class="scope-badge debug">
+                    debug {{ formatBytes(row.debugBytes) }}
+                  </span>
+                </div>
               </div>
             </div>
           </template>
@@ -562,7 +570,7 @@ defineExpose({
 }
 
 .target-table :deep(td.el-table__cell) {
-  height: 67px;
+  height: 76px;
   padding: 0;
   border-bottom: 1px solid #f2f4f7;
 }
@@ -683,6 +691,33 @@ defineExpose({
 
 .project-path:hover {
   color: #0f766e;
+}
+
+.scope-badges {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.scope-badge {
+  padding: 2px 5px;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 8px;
+  line-height: 1.3;
+  border-radius: 4px;
+}
+
+.scope-badge.release {
+  color: #0f766e;
+  background: #ecfdf9;
+  border: 1px solid #ccfbf1;
+}
+
+.scope-badge.debug {
+  color: #8a5a12;
+  background: #fffaeb;
+  border: 1px solid #fef0c7;
 }
 
 .copy-icon {

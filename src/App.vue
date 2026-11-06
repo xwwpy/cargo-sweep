@@ -56,7 +56,7 @@ import {
 } from "./api";
 import { basename, cleanPath, formatBytes, pathKey } from "./lib/format";
 import { APP_VERSION } from "./lib/version";
-import type { ScanProgress, TargetInfo } from "./types";
+import type { DeleteScope, ScanProgress, TargetInfo } from "./types";
 
 const STORAGE_KEY = "cargo-sweep.scan-roots.v1";
 
@@ -379,25 +379,31 @@ function requestDeleteAll() {
   requestDelete(targets.value);
 }
 
-function confirmDelete() {
+function confirmDelete(scope: DeleteScope) {
   if (deleting.value || pendingDeletion.value.length === 0) {
     return;
   }
 
   const pending = [...pendingDeletion.value];
   const paths = pending.map((target) => target.path);
+  const scopeLabel =
+    scope === "release"
+      ? "release 编译产物"
+      : scope === "debug"
+        ? "debug 编译产物"
+        : "全部编译产物";
   deleteDialogVisible.value = false;
   pendingDeletion.value = [];
 
   startTask({
     kind: "delete",
-    title: `清理 ${pending.length} 个 target 目录`,
+    title: `清理${scopeLabel} · ${pending.length} 个 target`,
     detail: pending
       .slice(0, 3)
       .map((target) => target.projectName)
       .join("、"),
     page: "targets",
-    run: (taskId) => deleteTargets(paths, taskId),
+    run: (taskId) => deleteTargets(paths, taskId, scope),
     onFinished: (result, error) => {
       if (error) {
         ElMessage.error(`清理失败：${errorMessage(error)}`);
@@ -406,23 +412,28 @@ function confirmDelete() {
       if (!result) {
         return;
       }
-      const deletedKeys = new Set(result.deleted.map(pathKey));
-      if (result.deleted.length > 0) {
-        targets.value = targets.value.filter(
-          (target) => !deletedKeys.has(pathKey(target.path)),
-        );
-        selectedRows.value = selectedRows.value.filter(
-          (target) => !deletedKeys.has(pathKey(target.path)),
-        );
-        tableRef.value?.clearSelection();
+      if (scope === "all") {
+        const deletedKeys = new Set(result.deleted.map(pathKey));
+        if (result.deleted.length > 0) {
+          targets.value = targets.value.filter(
+            (target) => !deletedKeys.has(pathKey(target.path)),
+          );
+          selectedRows.value = selectedRows.value.filter(
+            (target) => !deletedKeys.has(pathKey(target.path)),
+          );
+          tableRef.value?.clearSelection();
+        }
+      } else if (result.deleted.length > 0) {
+        void runScan();
       }
+
       if (result.cancelled) {
         ElMessage.info(
-          `清理已取消，已释放 ${formatBytes(result.freedBytes)}，清理了 ${result.deleted.length} 个目录`,
+          `清理已取消，已释放 ${formatBytes(result.freedBytes)}，清理了 ${result.deleted.length} 个 ${scopeLabel}目录`,
         );
       } else if (result.deleted.length > 0) {
         ElMessage.success(
-          `已释放 ${formatBytes(result.freedBytes)}，清理了 ${result.deleted.length} 个 target 目录`,
+          `已释放 ${formatBytes(result.freedBytes)}，清理了 ${result.deleted.length} 个 ${scopeLabel}目录`,
         );
       }
       if (result.failures.length > 0) {
@@ -435,7 +446,7 @@ function confirmDelete() {
         result.deleted.length === 0 &&
         result.failures.length === 0
       ) {
-        ElMessage.info("没有目录需要删除");
+        ElMessage.info(`没有可清理的${scopeLabel}`);
       }
     },
   });

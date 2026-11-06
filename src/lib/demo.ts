@@ -4,6 +4,7 @@ import type {
   CargoHomeStatus,
   CargoSourceStatus,
   DeleteResult,
+  DeleteScope,
   LatestRustVersions,
   RustInstallationProbe,
   RustToolchainOperationResult,
@@ -29,6 +30,10 @@ function target(
     projectPath,
     sizeBytes,
     fileCount,
+    releaseBytes: Math.floor(sizeBytes * 0.62),
+    releaseFiles: Math.floor(fileCount * 0.58),
+    debugBytes: Math.floor(sizeBytes * 0.28),
+    debugFiles: Math.floor(fileCount * 0.34),
     modifiedMs: Date.now() - modifiedHoursAgo * HOUR,
   };
 }
@@ -520,14 +525,23 @@ export async function demoUpdateRustToolchain(
   );
 }
 
-export async function demoDelete(paths: string[]): Promise<DeleteResult> {
+export async function demoDelete(
+  paths: string[],
+  scope: DeleteScope = "all",
+): Promise<DeleteResult> {
   await new Promise((resolve) => window.setTimeout(resolve, 700));
-  const freedBytes = demoTargets
-    .filter((item) => paths.includes(item.path))
-    .reduce((total, item) => total + item.sizeBytes, 0);
+  const selected = demoTargets.filter((item) => paths.includes(item.path));
+  const freedBytes = selected.reduce((total, item) => {
+    if (scope === "release") return total + item.releaseBytes;
+    if (scope === "debug") return total + item.debugBytes;
+    return total + item.sizeBytes;
+  }, 0);
 
   return {
-    deleted: paths,
+    deleted:
+      scope === "all"
+        ? paths
+        : selected.map((item) => `${item.path}\\${scope}`),
     freedBytes,
     failures: [],
     elapsedMs: 612,

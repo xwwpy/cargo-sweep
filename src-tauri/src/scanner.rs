@@ -36,6 +36,10 @@ pub struct TargetInfo {
     pub project_path: String,
     pub size_bytes: u64,
     pub file_count: u64,
+    pub release_bytes: u64,
+    pub release_files: u64,
+    pub debug_bytes: u64,
+    pub debug_files: u64,
     pub modified_ms: Option<u64>,
 }
 
@@ -77,6 +81,32 @@ pub struct DeleteResult {
     pub failures: Vec<DeleteFailure>,
     pub elapsed_ms: u64,
     pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteScope {
+    All,
+    Release,
+    Debug,
+}
+
+impl DeleteScope {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "all" => Ok(Self::All),
+            "release" => Ok(Self::Release),
+            "debug" => Ok(Self::Debug),
+            _ => Err("删除范围无效，只能选择 release、debug 或全部编译产物。".into()),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "全部编译产物",
+            Self::Release => "release 编译产物",
+            Self::Debug => "debug 编译产物",
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -185,11 +215,17 @@ where
 /// arbitrary directory.
 #[cfg(test)]
 pub fn delete_targets(paths: Vec<String>) -> DeleteResult {
-    delete_targets_with_progress(paths, || false, |_, _, _| {})
+    delete_targets_with_progress(paths, DeleteScope::All, || false, |_, _, _| {})
+}
+
+#[cfg(test)]
+pub fn delete_targets_for_scope(paths: Vec<String>, scope: DeleteScope) -> DeleteResult {
+    delete_targets_with_progress(paths, scope, || false, |_, _, _| {})
 }
 
 pub fn delete_targets_with_progress<C, F>(
     paths: Vec<String>,
+    scope: DeleteScope,
     mut is_cancelled: C,
     mut on_progress: F,
 ) -> DeleteResult
@@ -224,20 +260,26 @@ where
             }
         };
 
-        if !seen.insert(canonical.clone()) {
-            continue;
-        }
-
-        let size = measure_dir(&canonical).size_bytes;
-        match remove_dir_all_robust(&canonical) {
-            Ok(()) => {
-                freed_bytes = freed_bytes.saturating_add(size);
-                deleted.push(canonical.display().to_string());
+        let targets = match scope {
+            DeleteScope::All => vec![canonical],
+            DeleteScope::Release => compile_scope_dirs(&canonical, "release"),
+            DeleteScope::Debug => compile_scope_dirs(&canonical, "debug"),
+        };
+        for target in targets {
+            if !seen.insert(target.clone()) {
+                continue;
             }
-            Err(error) => failures.push(DeleteFailure {
-                path: raw_path,
-                message: format!("删除失败：{error}"),
-            }),
+            let size = measure_dir(&target).size_bytes;
+            match remove_dir_all_robust(&target) {
+                Ok(()) => {
+                    freed_bytes = freed_bytes.saturating_add(size);
+                    deleted.push(target.display().to_string());
+                }
+                Err(error) => failures.push(DeleteFailure {
+                    path: target.display().to_string(),
+                    message: format!("删除失败：{error}"),
+                }),
+            }
         }
     }
 
@@ -375,7 +417,7 @@ fn build_target_info(path: &Path) -> Option<TargetInfo> {
             .unwrap_or("Rust project")
             .to_string()
     });
-    let measurement = measure_dir(path);
+    let (measurement, release, debug) = measure_target(path);
 
     Some(TargetInfo {
         path: path.display().to_string(),
@@ -383,8 +425,103 @@ fn build_target_info(path: &Path) -> Option<TargetInfo> {
         project_path: parent.display().to_string(),
         size_bytes: measurement.size_bytes,
         file_count: measurement.file_count,
+        release_bytes: release.size_bytes,
+        release_files: release.file_count,
+        debug_bytes: debug.size_bytes,
+        debug_files: debug.file_count,
         modified_ms: measurement.modified_ms,
     })
+}
+
+fn measure_target(path: &Path) -> (Measurement, Measurement, Measurement) {
+    let mut total = Measurement {
+        modified_ms: fs::metadata(path)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(system_time_ms),
+        ..Measurement::default()
+    };
+    let mut release = Measurement::default();
+    let mut debug = Measurement::default();
+
+    for entry in WalkDir::new(path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+    {
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let length = metadata.len();
+        total.size_bytes = total.size_bytes.saturating_add(length);
+        total.file_count = total.file_count.saturating_add(1);
+
+        let Ok(relative) = entry.path().strip_prefix(path) else {
+            continue;
+        };
+        let components: Vec<String> = relative
+            .components()
+            .filter_map(|component| match component {
+                std::path::Component::Normal(value) => Some(value.to_string_lossy().to_string()),
+                _ => None,
+            })
+            .collect();
+        let scope = components
+            .first()
+            .map(String::as_str)
+            .filter(|name| {
+                name.eq_ignore_ascii_case("release") || name.eq_ignore_ascii_case("debug")
+            })
+            .or_else(|| {
+                components.get(1).map(String::as_str).filter(|name| {
+                    name.eq_ignore_ascii_case("release") || name.eq_ignore_ascii_case("debug")
+                })
+            });
+        let bucket = match scope {
+            Some(name) if name.eq_ignore_ascii_case("release") => &mut release,
+            Some(name) if name.eq_ignore_ascii_case("debug") => &mut debug,
+            _ => continue,
+        };
+        bucket.size_bytes = bucket.size_bytes.saturating_add(length);
+        bucket.file_count = bucket.file_count.saturating_add(1);
+    }
+
+    (total, release, debug)
+}
+
+fn is_real_directory(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+/// Cargo keeps host artifacts in `target/release` and cross-target artifacts in
+/// `target/<triple>/release`. Both are treated as one compile scope.
+fn compile_scope_dirs(target: &Path, scope: &str) -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    let direct = target.join(scope);
+    if is_real_directory(&direct) {
+        directories.push(direct);
+    }
+    let Ok(entries) = fs::read_dir(target) else {
+        return directories;
+    };
+    for entry in entries.flatten() {
+        if !is_real_directory(&entry.path()) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.eq_ignore_ascii_case("release") || name.eq_ignore_ascii_case("debug") {
+            continue;
+        }
+        let nested = entry.path().join(scope);
+        if is_real_directory(&nested) {
+            directories.push(nested);
+        }
+    }
+    directories.sort();
+    directories
 }
 
 fn package_name(cargo_toml: &Path) -> Option<String> {
@@ -528,12 +665,14 @@ mod tests {
         let project = root.join(folder);
         let target = project.join("target");
         fs::create_dir_all(target.join("debug")).unwrap();
+        fs::create_dir_all(target.join("release")).unwrap();
         fs::write(
             project.join("Cargo.toml"),
             format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\n"),
         )
         .unwrap();
         fs::write(target.join("debug").join("app.exe"), vec![7u8; bytes]).unwrap();
+        fs::write(target.join("release").join("app.exe"), vec![9u8; bytes]).unwrap();
         project
     }
 
@@ -556,7 +695,9 @@ mod tests {
                 .to_string()
         );
         assert!(target.size_bytes >= 2048);
-        assert_eq!(target.file_count, 1);
+        assert_eq!(target.file_count, 2);
+        assert_eq!(target.release_bytes, 2048);
+        assert_eq!(target.debug_bytes, 2048);
         #[cfg(windows)]
         assert!(!target.path.starts_with(r"\\?\"));
     }
@@ -587,6 +728,26 @@ mod tests {
         assert!(result.deleted.is_empty());
         assert_eq!(result.failures.len(), 1);
         assert!(target.exists());
+    }
+
+    #[test]
+    fn deletion_can_remove_only_release_artifacts() {
+        let temp = tempdir().unwrap();
+        let project = make_project(temp.path(), "scoped", "scoped", 1024);
+        let target = project.join("target");
+        let release = target.join("release");
+        let debug = target.join("debug");
+
+        let result =
+            delete_targets_for_scope(vec![target.display().to_string()], DeleteScope::Release);
+
+        assert_eq!(result.failures.len(), 0);
+        assert_eq!(result.deleted.len(), 1);
+        assert!(result.freed_bytes >= 1024);
+        assert!(!release.exists());
+        assert!(debug.exists());
+        assert!(target.exists());
+        assert!(project.join("Cargo.toml").exists());
     }
 
     #[test]
