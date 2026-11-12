@@ -702,25 +702,6 @@ fn append_output(output: &mut String, text: &str) {
     output.push_str(text.trim());
 }
 
-fn remove_toolchain_directory(target: &str) -> Result<bool, String> {
-    let home = env::var_os("RUSTUP_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".rustup")))
-        .ok_or_else(|| "无法确定 RUSTUP_HOME。".to_string())?;
-    let directory = home.join("toolchains").join(target);
-    if !directory.exists() {
-        return Ok(false);
-    }
-    let metadata =
-        fs::symlink_metadata(&directory).map_err(|error| format!("读取工具链目录失败：{error}"))?;
-    if metadata.file_type().is_symlink() {
-        fs::remove_file(&directory).map_err(|error| format!("移除工具链链接失败：{error}"))?;
-    } else {
-        fs::remove_dir_all(&directory).map_err(|error| format!("移除工具链目录失败：{error}"))?;
-    }
-    Ok(true)
-}
-
 fn detect_after_uninstall() -> Result<RustToolchainStatus, String> {
     let mut last_error = String::new();
     for attempt in 0..4 {
@@ -800,35 +781,6 @@ pub fn uninstall(target: String) -> Result<ToolchainOperationResult, String> {
         }
     }
 
-    let mut cleanup_note = String::new();
-    if command_succeeded {
-        match remove_toolchain_directory(&target) {
-            Ok(true) => {
-                cleanup_note = "rustup 未能移除工具链目录，已执行目录清理".into();
-                let status = detect_after_uninstall()?;
-                let still_installed = status
-                    .toolchains
-                    .iter()
-                    .any(|toolchain| toolchain.name == target);
-                if !still_installed {
-                    if !combined.is_empty() {
-                        combined.push('\n');
-                    }
-                    combined.push_str(&cleanup_note);
-                    return Ok(ToolchainOperationResult {
-                        success: true,
-                        output: combined.trim().to_string(),
-                        status,
-                    });
-                }
-            }
-            Ok(false) => {}
-            Err(error) => {
-                cleanup_note = format!("；清理工具链目录失败：{error}");
-            }
-        }
-    }
-
     let status = detect_after_uninstall()?;
     let home = env::var_os("RUSTUP_HOME")
         .map(|value| value.to_string_lossy().to_string())
@@ -842,11 +794,11 @@ pub fn uninstall(target: String) -> Result<ToolchainOperationResult, String> {
         success: false,
         output: if combined.trim().is_empty() {
             format!(
-                "删除工具链 {target} 失败：{command_note}{cleanup_note}。RUSTUP_HOME={home}。请确认终端使用相同的 Rust 环境后重试。"
+                "删除工具链 {target} 失败：{command_note}。RUSTUP_HOME={home}。请确认终端使用相同的 Rust 环境后重试。"
             )
         } else {
             format!(
-                "{}\n\n删除工具链 {target} 失败：{command_note}{cleanup_note}。RUSTUP_HOME={home}。请确认终端使用相同的 Rust 环境后重试。",
+                "{}\n\n删除工具链 {target} 失败：{command_note}。RUSTUP_HOME={home}。请确认终端使用相同的 Rust 环境后重试。",
                 combined.trim()
             )
         },
