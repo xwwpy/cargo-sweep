@@ -93,6 +93,9 @@ export function taskHasDeterminateProgress(task: BackgroundTask): boolean {
       task.components.some((component) => component.totalBytes > 0)
     );
   }
+  if (task.phase === "install" && task.percent < 100) {
+    return false;
+  }
   return true;
 }
 

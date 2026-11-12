@@ -1670,6 +1670,7 @@ impl RustupProgress {
             if let Some(url) = clean.split("downloading file url=").nth(1) {
                 let url = url.trim();
                 if let Some(name) = component_name_from_url(url) {
+                    let mut started_line = None;
                     let existing = self
                         .components
                         .iter()
@@ -1683,6 +1684,7 @@ impl RustupProgress {
                     } else {
                         self.finish_downloading();
                         self.downloads = self.downloads.saturating_add(1);
+                        started_line = Some(format!("info: downloading component '{name}'"));
                         self.components.push(TrackedComponent {
                             name: name.clone(),
                             phase: "downloading".into(),
@@ -1712,6 +1714,7 @@ impl RustupProgress {
                             }
                         });
                     }
+                    return self.snapshot(started_line);
                 }
             }
             return self.snapshot(None);
@@ -1812,7 +1815,41 @@ impl RustupProgress {
         self.snapshot(Some(clean))
     }
 
+    fn complete_downloaded(&mut self) {
+        let now = Instant::now();
+        let meter = self.meter_values();
+        for component in &mut self.components {
+            if component.phase != "downloading" {
+                continue;
+            }
+            let Some(total) = component.total_bytes else {
+                continue;
+            };
+            if total == 0 || meter.bytes.saturating_sub(component.start_meter_bytes) < total {
+                continue;
+            }
+            component.phase = "done".into();
+            component.percent = 100;
+            component.downloaded_bytes = total;
+            component.speed_bps = meter.speed_bps;
+            if let Some(started) = component.started {
+                component.elapsed_ms = now.duration_since(started).as_millis() as u64;
+            }
+        }
+        if self.phase == "download"
+            && !self.components.is_empty()
+            && !self
+                .components
+                .iter()
+                .any(|component| component.phase == "downloading")
+        {
+            self.phase = "install".into();
+            self.message = "组件下载完成，正在安装工具链…".into();
+        }
+    }
+
     fn tick(&mut self) -> OperationProgress {
+        self.complete_downloaded();
         self.refresh_verify_message();
         let mut progress = self.snapshot(None);
         if self.phase != "download" {
@@ -2176,8 +2213,8 @@ where
                     continue;
                 }
                 on_line(&line);
-                if !line.trim_start().starts_with("debug:") {
-                    text.push_str(&line);
+                if should_record_stream_line(&line) {
+                    text.push_str(strip_ansi(&line).trim_end());
                     text.push('\n');
                 }
             }
@@ -2349,6 +2386,38 @@ fn strip_prefix(value: &str, prefix: &str) -> String {
     value.strip_prefix(prefix).unwrap_or(value).to_string()
 }
 
+fn should_record_stream_line(line: &str) -> bool {
+    let clean = strip_ansi(line);
+    let trimmed = clean.trim();
+    if trimmed.is_empty() || trimmed.starts_with("debug:") {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let named = lower.starts_with("info:")
+        || lower.starts_with("error:")
+        || lower.starts_with("warning:")
+        || lower.starts_with("warn:")
+        || lower.starts_with("caused by:")
+        || lower.starts_with("help:")
+        || lower.starts_with("note:");
+    if named {
+        return true;
+    }
+    // Progress bars are rendered separately as component rows. Their raw
+    // carriage-return fragments must not leak into the operation console.
+    let progress_style = trimmed.contains('%')
+        || line.contains('\u{1b}')
+        || lower.contains("mib/s")
+        || lower.contains("kib/s")
+        || lower.contains("gib/s")
+        || (lower.contains("mib") && lower.contains('/'))
+        || (lower.contains("kib") && lower.contains('/'));
+    if progress_style {
+        return false;
+    }
+    trimmed.chars().any(char::is_alphabetic)
+}
+
 fn clean_output(output: &str) -> String {
     strip_ansi(output)
         .replace("\r\n", "\n")
@@ -2481,16 +2550,9 @@ LLVM version: 23.1.1";
     #[test]
     #[ignore = "requires rustup and installs a small target"]
     fn probes_real_rustup_target_stream() {
-        eprintln!(
-            "ENV RUSTUP_HOME={:?} CARGO_HOME={:?} TEMP={:?} cwd={:?}",
-            env::var_os("RUSTUP_HOME"),
-            env::var_os("CARGO_HOME"),
-            env::var_os("TEMP"),
-            env::current_dir()
-        );
         let mut progress = RustupProgress::new(Arc::new(Mutex::new(DownloadMeter::default())));
         let mut component_events = 0;
-        let (success, text) = run_streaming(
+        let (success, _text) = run_streaming(
             "rustup",
             &[
                 "-v",
@@ -2504,15 +2566,10 @@ LLVM version: 23.1.1";
                 let snapshot = progress.observe(line);
                 if !snapshot.components.is_empty() {
                     component_events += 1;
-                    eprintln!(
-                        "EVENT phase={} percent={} components={:?} line={:?}",
-                        snapshot.phase, snapshot.percent, snapshot.components, snapshot.line
-                    );
                 }
             },
         )
         .unwrap();
-        eprintln!("SUCCESS={success} TEXT={text}");
         assert!(success);
         assert!(component_events > 0);
     }
@@ -2619,6 +2676,25 @@ LLVM version: 23.1.1";
             "https://static.rust-lang.org/dist/channel-rust-stable.toml"
         )
         .is_none());
+    }
+
+    #[test]
+    fn operation_logs_drop_progress_fragments() {
+        assert!(should_record_stream_line(
+            "info: downloading component 'rustc'"
+        ));
+        assert!(should_record_stream_line(
+            "stable-x86_64-pc-windows-msvc installed"
+        ));
+        assert!(!should_record_stream_line(
+            "debug: downloading file url=https://example.invalid"
+        ));
+        assert!(!should_record_stream_line(
+            "Downloading rustc  42.1%  20 MB / 48 MB"
+        ));
+        assert!(!should_record_stream_line("42%"));
+        assert!(!should_record_stream_line("=====----------"));
+        assert!(!should_record_stream_line("\u{1b}[2K"));
     }
 
     #[test]

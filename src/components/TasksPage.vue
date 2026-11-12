@@ -286,7 +286,13 @@ function isActive(task: BackgroundTask): boolean {
 
         <details v-if="task.output.length > 0" open class="task-output">
           <summary>任务输出（{{ task.output.length }} 行）</summary>
-          <div v-if="isActive(task)" class="task-live-output">
+          <div
+            v-if="
+              isActive(task) &&
+              task.output[task.output.length - 1] !== task.message
+            "
+            class="task-live-output"
+          >
             <span />
             {{ task.message }}
           </div>
