@@ -370,13 +370,14 @@ async fn update_rust_toolchain(
     app: tauri::AppHandle,
     task_id: String,
     target: Option<String>,
+    expected_version: Option<String>,
 ) -> Result<ToolchainOperationResult, String> {
     background::register(&task_id, "toolchain");
     let progress_task_id = task_id.clone();
     let cleanup_task_id = task_id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         background::with_task(&task_id, || {
-            rust_toolchain::update_with_progress(target, |progress| {
+            rust_toolchain::update_with_progress(target, expected_version, |progress| {
                 emit_toolchain_progress(&app, &progress_task_id, progress);
             })
         })

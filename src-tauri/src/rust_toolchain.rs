@@ -159,6 +159,15 @@ struct AppSettings {
     rustup_path: Option<String>,
 }
 
+// Mutations share one Rust environment and must not race each other.
+static TOOLCHAIN_MUTATION: Mutex<()> = Mutex::new(());
+
+pub(crate) fn begin_mutation() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    TOOLCHAIN_MUTATION
+        .try_lock()
+        .map_err(|_| "已有 Rust 环境操作正在进行，请等待完成后重试。".to_string())
+}
+
 pub fn probe() -> RustInstallationProbe {
     crate::cargo_home::apply_saved_homes();
     crate::rustup_source::apply_saved_source();
@@ -204,19 +213,24 @@ pub fn detect() -> Result<RustToolchainStatus, String> {
     };
 
     let list_output = if rustup_installed {
-        run("rustup", &["toolchain", "list"]).unwrap_or_default()
+        run("rustup", &["toolchain", "list"])
+            .map_err(|error| format!("无法读取已安装工具链，不能确认当前状态：{error}"))?
     } else {
         String::new()
     };
     let mut toolchains = Vec::new();
     for line in list_output.lines() {
         let line = line.trim();
-        if line.is_empty() {
+        if line.is_empty() || line == "no installed toolchains" {
             continue;
         }
         let name = line.split_whitespace().next().unwrap_or(line).to_string();
-        let plus = format!("+{name}");
-        let version_output = run("rustc", &[plus.as_str(), "--version", "--verbose"]).ok();
+        if validate_target(&name).is_err() {
+            continue;
+        }
+        // Query the selected rustup, not an unrelated rustc on PATH.
+        // 'rustup run' without --install never downloads a missing toolchain.
+        let version_output = run("rustup", &["run", &name, "rustc", "--version", "--verbose"]).ok();
         let (rustc_version, release, _host) = version_output
             .as_deref()
             .map(parse_rustc_verbose)
@@ -240,7 +254,14 @@ pub fn detect() -> Result<RustToolchainStatus, String> {
         });
     }
 
-    let default_output = run("rustc", &["--version", "--verbose"]).ok();
+    let default_output = if rustup_installed {
+        active_toolchain
+            .as_deref()
+            .or(default_toolchain.as_deref())
+            .and_then(|name| run("rustup", &["run", name, "rustc", "--version", "--verbose"]).ok())
+    } else {
+        run("rustc", &["--version", "--verbose"]).ok()
+    };
     let (default_rustc_version, default_release, default_host) = default_output
         .as_deref()
         .map(parse_rustc_verbose)
@@ -257,11 +278,13 @@ pub fn detect() -> Result<RustToolchainStatus, String> {
         .and_then(|toolchain| toolchain.rustc_version.clone())
         .or_else(|| (!default_rustc_version.is_empty()).then_some(default_rustc_version));
     let active_host = if let Some(toolchain) = active_info {
-        let plus = format!("+{}", toolchain.name);
-        run("rustc", &[plus.as_str(), "--version", "--verbose"])
-            .ok()
-            .and_then(|output| parse_rustc_verbose(&output).2)
-            .or(default_host)
+        run(
+            "rustup",
+            &["run", &toolchain.name, "rustc", "--version", "--verbose"],
+        )
+        .ok()
+        .and_then(|output| parse_rustc_verbose(&output).2)
+        .or(default_host)
     } else {
         default_host
     };
@@ -269,9 +292,7 @@ pub fn detect() -> Result<RustToolchainStatus, String> {
     let channels = ["stable", "nightly"]
         .iter()
         .map(|channel| {
-            let installed = toolchains
-                .iter()
-                .find(|toolchain| toolchain.channel == *channel);
+            let installed = channel_toolchain(&toolchains, channel, active_host.as_deref());
             RustChannel {
                 channel: (*channel).to_string(),
                 installed: installed.is_some(),
@@ -284,8 +305,15 @@ pub fn detect() -> Result<RustToolchainStatus, String> {
         })
         .collect();
 
-    let cargo_version = run("cargo", &["--version"])
-        .ok()
+    let cargo_output = if rustup_installed {
+        active_toolchain
+            .as_deref()
+            .or(default_toolchain.as_deref())
+            .and_then(|name| run("rustup", &["run", name, "cargo", "--version"]).ok())
+    } else {
+        run("cargo", &["--version"]).ok()
+    };
+    let cargo_version = cargo_output
         .and_then(|output| first_prefixed_line(&output, "cargo "))
         .map(|version| strip_prefix(&version, "cargo "));
 
@@ -353,6 +381,10 @@ pub fn install_with_progress<F>(
 where
     F: FnMut(OperationProgress),
 {
+    let _mutation = begin_mutation()?;
+    if background::current_cancelled() {
+        return Err("任务已取消。".into());
+    }
     let target = validate_target(&target)?;
     let before = detect()?;
     if !before.rustup_installed {
@@ -413,26 +445,30 @@ where
         };
     }
 
+    let mut status = detect_after_operation()?;
+    success = verify_operation_success(success, &mut text, &status, &target, None);
     if success && (set_default || before.default_toolchain.is_none()) {
         on_progress(OperationProgress::new(97, "设置默认工具链"));
-        let default_output = run("rustup", &["default", &target]);
-        match default_output {
-            Ok(default_text) => {
-                if !default_text.trim().is_empty() {
-                    text.push('\n');
-                    text.push_str(default_text.trim());
-                }
-            }
+        match run("rustup", &["default", &target]) {
+            Ok(default_text) => append_output(&mut text, &default_text),
             Err(error) => {
-                return Err(format!("工具链已安装，但设置默认工具链失败：{error}"));
+                success = false;
+                append_output(
+                    &mut text,
+                    &format!("工具链已安装，但设置默认工具链失败：{error}"),
+                );
             }
         }
+        status = detect_after_operation()?;
+        if success && !default_matches_target(&status, &target) {
+            success = false;
+            append_output(&mut text, "校验失败：默认工具链未切换到所选工具链。");
+        }
     }
-
+    success = verify_operation_success(success, &mut text, &status, &target, None);
     if success {
-        on_progress(progress.finish("工具链安装完成"));
+        on_progress(progress.finish("工具链安装并校验完成"));
     }
-    let status = detect().unwrap_or(before);
     Ok(ToolchainOperationResult {
         success,
         output: if text.trim().is_empty() {
@@ -445,80 +481,106 @@ where
 }
 
 pub fn set_default(target: String) -> Result<ToolchainOperationResult, String> {
+    let _mutation = begin_mutation()?;
     let target = validate_target(&target)?;
     let before = detect()?;
     if !before.rustup_installed {
         return Err("未检测到 rustup，无法切换工具链。".into());
     }
-    let output = run_capture("rustup", &["default", &target])?;
-    let status = detect().unwrap_or(before);
+    // Switching is not an implicit download operation.
+    verify_installed_target(&before, &target, None)?;
+    let (mut success, mut output) = run_capture("rustup", &["default", &target])?;
+    let status = detect_after_operation()?;
+    if success && !default_matches_target(&status, &target) {
+        success = false;
+        append_output(&mut output, "校验失败：默认工具链未切换到所选工具链。");
+    }
     Ok(ToolchainOperationResult {
-        success: output.0,
-        output: if output.1.trim().is_empty() {
-            format!("已切换默认工具链为 {target}")
-        } else {
-            output.1.trim().to_string()
-        },
+        success,
+        output,
         status,
     })
 }
 
 pub fn update_with_progress<F>(
     target: Option<String>,
+    expected_version: Option<String>,
     mut on_progress: F,
 ) -> Result<ToolchainOperationResult, String>
 where
     F: FnMut(OperationProgress),
 {
+    let _mutation = begin_mutation()?;
+    if background::current_cancelled() {
+        return Err("任务已取消。".into());
+    }
     let target = target.map(|value| validate_target(&value)).transpose()?;
     let before = detect()?;
+    if !before.rustup_installed {
+        return Err("未检测到 rustup，无法更新工具链。".into());
+    }
     let toolchain = target
         .or_else(|| before.active_toolchain.clone())
-        .or_else(|| before.default_toolchain.clone());
+        .or_else(|| before.default_toolchain.clone())
+        .ok_or_else(|| "没有可更新的工具链，请先安装工具链。".to_string())?;
+    verify_installed_target(&before, &toolchain, None)?;
 
     on_progress(OperationProgress::new(2, "检查工具链更新"));
-    let mut args = vec!["-v", "update", "--no-self-update"];
-    if let Some(toolchain) = toolchain.as_deref() {
-        args.push(toolchain);
-    }
     let monitor = DownloadMonitor::start();
     let mut progress = RustupProgress::new(monitor.meter());
-    let (mut success, mut text) = run_streaming("rustup", &args, |line| {
-        on_progress(progress.observe(line));
-    })?;
-    if !success && text.trim().is_empty() {
-        return Err("rustup update 失败，未返回输出。".into());
+    let (mut success, mut text) = run_streaming(
+        "rustup",
+        &["-v", "update", "--no-self-update", &toolchain],
+        |line| {
+            on_progress(progress.observe(line));
+        },
+    )?;
+    if !success && needs_toolchain_repair(&text) && !background::current_cancelled() {
+        // Never uninstall a usable toolchain as automatic error recovery.
+        // Let rustup manage rollback; keep its diagnostics and the current tools.
+        append_output(&mut text, "更新发生组件冲突，未自动卸载或删除现有工具链。请关闭占用工具链的编译进程后重试；如需重装，请先切换到其他工具链，再明确执行删除和安装。");
     }
-    if !success && !background::current_cancelled() && needs_toolchain_repair(&text) {
-        if let Some(toolchain_name) = toolchain.clone() {
-            on_progress(OperationProgress::new(
-                4,
-                "检测到工具链文件冲突，正在自动修复",
-            ));
-            let was_default = before.default_toolchain.as_deref() == Some(toolchain_name.as_str());
-            match repair_toolchain(&toolchain_name, was_default, &mut on_progress) {
-                Ok((repair_success, repair_text)) => {
-                    success = repair_success;
-                    text = format!("{text}\n\n{repair_text}");
-                }
-                Err(error) => {
-                    text = format!("{text}\n\n[自动修复失败]\n{error}");
-                }
-            }
-        }
+    let mut status = detect_after_operation()?;
+    // A lagging mirror can return success without changing the compiler. Retry
+    // just this command against the official server, without changing saved env.
+    if success
+        && !background::current_cancelled()
+        && expected_version.is_some()
+        && verify_installed_target(&status, &toolchain, expected_version.as_deref()).is_err()
+        && (env::var_os("RUSTUP_DIST_SERVER").is_some()
+            || env::var_os("RUSTUP_UPDATE_ROOT").is_some())
+    {
+        append_output(
+            &mut text,
+            "当前下载源未更新到预期构建，改用官方源重试（不更改已保存的下载源）。",
+        );
+        let fallback_monitor = DownloadMonitor::start();
+        let mut fallback_progress = RustupProgress::new(fallback_monitor.meter());
+        let (fallback_success, fallback_text) = run_streaming_with_env(
+            "rustup",
+            &["-v", "update", "--no-self-update", &toolchain],
+            &["RUSTUP_DIST_SERVER", "RUSTUP_UPDATE_ROOT"],
+            |line| on_progress(fallback_progress.observe(line)),
+        )?;
+        append_output(&mut text, &fallback_text);
+        success = fallback_success;
+        progress = fallback_progress;
+        status = detect_after_operation()?;
     }
+    let success = verify_operation_success(
+        success,
+        &mut text,
+        &status,
+        &toolchain,
+        expected_version.as_deref(),
+    );
     if success {
-        on_progress(progress.finish(if text.trim().is_empty() {
-            "没有新的更新"
-        } else {
-            "工具链更新完成"
-        }));
+        on_progress(progress.finish("工具链更新并校验完成"));
     }
-    let status = detect().unwrap_or(before);
     Ok(ToolchainOperationResult {
         success,
         output: if text.trim().is_empty() {
-            "没有新的更新。".into()
+            "工具链已校验，无需更新。".into()
         } else {
             text.trim().to_string()
         },
@@ -540,158 +602,6 @@ fn needs_toolchain_repair(output: &str) -> bool {
     .any(|needle| lower.contains(needle) || output.contains(needle))
 }
 
-fn repair_toolchain<F>(
-    toolchain: &str,
-    was_default: bool,
-    on_progress: &mut F,
-) -> Result<(bool, String), String>
-where
-    F: FnMut(OperationProgress),
-{
-    let toolchains_dir =
-        rustup_toolchains_dir().ok_or_else(|| "无法定位 RUSTUP_HOME/toolchains。".to_string())?;
-    let toolchain_dir = toolchains_dir.join(toolchain);
-    let components = installed_packages("component", toolchain);
-    let targets = installed_packages("target", toolchain);
-    let mut output = String::from("[自动修复] 检测到工具链文件冲突，正在重新安装。");
-
-    on_progress(OperationProgress::new(6, "清理损坏的工具链"));
-    if let Ok((_, text)) = run_capture("rustup", &["toolchain", "uninstall", toolchain]) {
-        append_output(&mut output, &text);
-    }
-
-    let backup = if toolchain_dir.exists() {
-        let backup = repair_backup_path(&toolchain_dir);
-        fs::rename(&toolchain_dir, &backup).map_err(|error| {
-            format!(
-                "无法移动损坏的工具链目录 {}：{error}",
-                toolchain_dir.display()
-            )
-        })?;
-        append_output(
-            &mut output,
-            &format!("已将损坏目录移动到 {}", backup.display()),
-        );
-        Some(backup)
-    } else {
-        None
-    };
-
-    let mut progress = RustupProgress::new(Arc::new(Mutex::new(DownloadMeter::default())));
-    let install_result = run_streaming(
-        "rustup",
-        &[
-            "-v",
-            "toolchain",
-            "install",
-            toolchain,
-            "--profile",
-            "default",
-        ],
-        |line| {
-            on_progress(progress.observe(line));
-        },
-    );
-    let (mut installed, install_text) = match install_result {
-        Ok(result) => result,
-        Err(error) => {
-            restore_repair_backup(&toolchain_dir, backup.as_deref());
-            append_output(&mut output, &format!("重新安装失败：{error}"));
-            return Ok((false, output));
-        }
-    };
-    append_output(&mut output, &install_text);
-
-    if !installed {
-        restore_repair_backup(&toolchain_dir, backup.as_deref());
-        append_output(&mut output, "\n工具链重新安装失败，已保留原目录备份。");
-        return Ok((false, output));
-    }
-
-    on_progress(OperationProgress::new(94, "恢复额外组件和目标"));
-    for component in components {
-        if let Ok((_, text)) = run_capture(
-            "rustup",
-            &["component", "add", "--toolchain", toolchain, &component],
-        ) {
-            append_output(&mut output, &text);
-        }
-    }
-    for target in targets {
-        if let Ok((_, text)) = run_capture(
-            "rustup",
-            &["target", "add", "--toolchain", toolchain, &target],
-        ) {
-            append_output(&mut output, &text);
-        }
-    }
-    if was_default {
-        match run("rustup", &["default", toolchain]) {
-            Ok(text) => append_output(&mut output, &text),
-            Err(error) => {
-                installed = false;
-                append_output(&mut output, &format!("恢复默认工具链失败：{error}"));
-            }
-        }
-    }
-
-    if installed {
-        if let Some(backup) = backup {
-            let _ = fs::remove_dir_all(backup);
-        }
-        on_progress(progress.finish("工具链修复完成"));
-    } else {
-        restore_repair_backup(&toolchain_dir, backup.as_deref());
-    }
-    Ok((installed, output))
-}
-
-fn rustup_toolchains_dir() -> Option<PathBuf> {
-    env::var_os("RUSTUP_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".rustup")))
-        .map(|home| home.join("toolchains"))
-}
-
-fn repair_backup_path(toolchain_dir: &Path) -> PathBuf {
-    let name = toolchain_dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("toolchain");
-    let mut candidate = toolchain_dir.with_file_name(format!("{name}.cargo-sweep-repair"));
-    let mut suffix = 1usize;
-    while candidate.exists() {
-        candidate = toolchain_dir.with_file_name(format!("{name}.cargo-sweep-repair-{suffix}"));
-        suffix += 1;
-    }
-    candidate
-}
-
-fn restore_repair_backup(toolchain_dir: &Path, backup: Option<&Path>) {
-    let Some(backup) = backup else {
-        return;
-    };
-    if toolchain_dir.exists() {
-        let _ = fs::remove_dir_all(toolchain_dir);
-    }
-    if backup.exists() {
-        let _ = fs::rename(backup, toolchain_dir);
-    }
-}
-
-fn installed_packages(kind: &str, toolchain: &str) -> Vec<String> {
-    run(
-        "rustup",
-        &[kind, "list", "--installed", "--toolchain", toolchain],
-    )
-    .unwrap_or_default()
-    .lines()
-    .map(str::trim)
-    .filter(|line| !line.is_empty())
-    .map(ToOwned::to_owned)
-    .collect()
-}
-
 fn append_output(output: &mut String, text: &str) {
     if text.trim().is_empty() {
         return;
@@ -706,7 +616,8 @@ fn detect_after_uninstall() -> Result<RustToolchainStatus, String> {
     let mut last_error = String::new();
     for attempt in 0..4 {
         match detect() {
-            Ok(status) => return Ok(status),
+            Ok(status) if status.rustup_installed => return Ok(status),
+            Ok(_) => last_error = "无法运行 rustup，不能将空列表当作删除成功。".into(),
             Err(error) => last_error = error,
         }
         if attempt < 3 {
@@ -719,94 +630,96 @@ fn detect_after_uninstall() -> Result<RustToolchainStatus, String> {
 }
 
 pub fn uninstall(target: String) -> Result<ToolchainOperationResult, String> {
+    let _mutation = begin_mutation()?;
+    if background::current_cancelled() {
+        return Err("任务已取消。".into());
+    }
     let target = validate_target(&target)?;
     let before = detect()?;
-    let toolchain = before
-        .toolchains
-        .iter()
-        .find(|toolchain| toolchain.name == target)
-        .ok_or_else(|| format!("未找到工具链 {target}。"))?;
-    if toolchain.default || toolchain.active {
-        return Err("默认工具链不能直接删除，请先切换到其他工具链。".into());
-    }
-    if before.toolchains.len() <= 1 {
-        return Err("至少需要保留一个 Rust 工具链。".into());
-    }
+    validate_uninstall(&before, &target)?;
 
     let mut combined = String::new();
-    let mut command_succeeded = false;
     for attempt in 0..2 {
-        let mut command = Command::new("rustup");
-        command.args(["toolchain", "uninstall", &target]);
-        apply_no_window(&mut command);
-        command.stdout(Stdio::piped()).stderr(Stdio::piped());
-        let output = command
-            .output()
-            .map_err(|error| format!("无法启动 rustup toolchain uninstall：{error}"))?;
-        command_succeeded = output.status.success();
-        let text = clean_output(&format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-        if !text.trim().is_empty() {
-            if !combined.is_empty() {
-                combined.push('\n');
-            }
-            combined.push_str(text.trim());
+        if background::current_cancelled() {
+            return Err("任务已取消。".into());
         }
-
+        // Use the shared runner so cancellation can stop the rustup process.
+        let (command_succeeded, text) =
+            run_streaming("rustup", &["toolchain", "uninstall", &target], |_| {})?;
+        append_output(&mut combined, &text);
         let status = detect_after_uninstall()?;
         let still_installed = status
             .toolchains
             .iter()
             .any(|toolchain| toolchain.name == target);
+        if background::current_cancelled() {
+            append_output(&mut combined, "任务已取消。");
+            return Ok(ToolchainOperationResult {
+                success: false,
+                output: combined,
+                status,
+            });
+        }
         if !still_installed {
+            if combined.trim().is_empty() {
+                combined = format!("已删除并确认工具链 {target} 不再存在。");
+            }
             return Ok(ToolchainOperationResult {
                 success: true,
-                output: if combined.trim().is_empty() {
-                    format!("已删除工具链 {target}")
-                } else {
-                    combined.trim().to_string()
-                },
+                output: combined,
                 status,
             });
         }
         if attempt == 0 {
-            if !combined.is_empty() {
-                combined.push('\n');
-            }
-            combined.push_str("工具链仍在 rustup toolchain list 中，正在重试删除…");
+            // Revalidate protections: an external rustup may have changed the default.
+            validate_uninstall(&status, &target)?;
+            append_output(
+                &mut combined,
+                "工具链仍在 rustup toolchain list 中，正在重试删除…",
+            );
             std::thread::sleep(Duration::from_millis(300));
+            continue;
         }
-    }
-
-    let status = detect_after_uninstall()?;
-    let home = env::var_os("RUSTUP_HOME")
-        .map(|value| value.to_string_lossy().to_string())
-        .unwrap_or_else(|| "默认 RUSTUP_HOME".into());
-    let command_note = if command_succeeded {
-        "rustup 命令返回成功，但工具链仍存在"
-    } else {
-        "rustup 命令返回失败"
-    };
-    Ok(ToolchainOperationResult {
-        success: false,
-        output: if combined.trim().is_empty() {
-            format!(
-                "删除工具链 {target} 失败：{command_note}。RUSTUP_HOME={home}。请确认终端使用相同的 Rust 环境后重试。"
-            )
+        let home = env::var_os("RUSTUP_HOME")
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_else(|| "默认 RUSTUP_HOME".into());
+        let note = if command_succeeded {
+            "rustup 返回成功，但工具链仍存在"
         } else {
-            format!(
-                "{}\n\n删除工具链 {target} 失败：{command_note}。RUSTUP_HOME={home}。请确认终端使用相同的 Rust 环境后重试。",
-                combined.trim()
-            )
-        },
-        status,
-    })
+            "rustup 返回失败"
+        };
+        append_output(
+            &mut combined,
+            &format!(
+                "删除工具链 {target} 失败：{note}。RUSTUP_HOME={home}。未执行目录级强制删除。"
+            ),
+        );
+        return Ok(ToolchainOperationResult {
+            success: false,
+            output: combined,
+            status,
+        });
+    }
+    unreachable!("the last uninstall attempt always returns")
+}
+
+fn validate_uninstall(status: &RustToolchainStatus, target: &str) -> Result<(), String> {
+    let toolchain = status
+        .toolchains
+        .iter()
+        .find(|toolchain| toolchain.name == target)
+        .ok_or_else(|| format!("未找到工具链 {target}。"))?;
+    if toolchain.default || toolchain.active {
+        return Err("默认或正在使用的工具链不能直接删除，请先切换到其他工具链。".into());
+    }
+    if status.toolchains.len() <= 1 {
+        return Err("至少需要保留一个 Rust 工具链。".into());
+    }
+    Ok(())
 }
 
 pub fn set_rustup_path(path: String) -> Result<RustToolchainStatus, String> {
+    let _mutation = begin_mutation()?;
     let trimmed = path.trim().trim_matches('"').trim_matches('\'');
     let custom_path = if trimmed.is_empty() {
         None
@@ -836,6 +749,7 @@ pub fn install_rustup_with_progress<F>(
 where
     F: FnMut(OperationProgress),
 {
+    let _mutation = begin_mutation()?;
     if background::current_cancelled() {
         return Err("任务已取消。".into());
     }
@@ -853,10 +767,13 @@ where
         if run("rustup", &["--version"]).is_ok() {
             on_progress(OperationProgress::new(72, "安装 Stable 工具链"));
             ensure_stable_toolchain(&mut text)?;
-            on_progress(OperationProgress::new(100, "rustup 安装完成"));
-            let status = detect()?;
+            let status = detect_after_operation()?;
+            let success = verify_operation_success(true, &mut text, &status, "stable", None);
+            if success {
+                on_progress(OperationProgress::new(100, "rustup 安装并校验完成"));
+            }
             return Ok(ToolchainOperationResult {
-                success: true,
+                success,
                 output: text,
                 status,
             });
@@ -892,6 +809,9 @@ where
     let mut buffer = [0u8; 64 * 1024];
     let mut last_percent = 3u8;
     loop {
+        if background::current_cancelled() {
+            return Err("任务已取消。".into());
+        }
         let read = response
             .read(&mut buffer)
             .map_err(|error| format!("无法读取 rustup-init 下载内容：{error}"))?;
@@ -931,33 +851,27 @@ where
     }
     on_progress(OperationProgress::new(85, "安装 Stable 工具链"));
 
-    let before = detect()?;
-    let mut command = Command::new(&binary);
-    command.args([
-        "-y",
-        "--default-toolchain",
-        "stable",
-        "--profile",
-        "default",
-    ]);
-    apply_no_window(&mut command);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output = command
-        .output()
-        .map_err(|error| format!("无法启动 rustup-init：{error}"))?;
-    let success = output.status.success();
-    let text = clean_output(&format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    ));
+    let result = run_streaming(
+        binary
+            .to_str()
+            .ok_or_else(|| "rustup-init 路径不是有效文本。".to_string())?,
+        &[
+            "-y",
+            "--default-toolchain",
+            "stable",
+            "--profile",
+            "default",
+        ],
+        |_| {},
+    );
     let _ = fs::remove_file(&binary);
-    if success {
-        on_progress(OperationProgress::new(100, "rustup 安装完成"));
-    }
-
+    let (success, mut text) = result?;
     prepare_rust_environment();
-    let status = detect().unwrap_or(before);
+    let status = detect_after_operation()?;
+    let success = verify_operation_success(success, &mut text, &status, "stable", None);
+    if success {
+        on_progress(OperationProgress::new(100, "rustup 安装并校验完成"));
+    }
     Ok(ToolchainOperationResult {
         success,
         output: if text.trim().is_empty() {
@@ -1013,53 +927,46 @@ fn verify_download(
 
 #[cfg(windows)]
 fn install_rustup_with_winget() -> Option<Result<String, String>> {
-    let mut command = Command::new("winget");
-    command.args([
-        "install",
-        "--id",
-        "Rustlang.Rustup",
-        "-e",
-        "--silent",
-        "--accept-package-agreements",
-        "--accept-source-agreements",
-    ]);
-    apply_no_window(&mut command);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output = match command.output() {
-        Ok(output) => output,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(error) => return Some(Err(format!("无法启动 winget：{error}"))),
-    };
-    let text = clean_output(&format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    ));
-    if output.status.success() {
-        Some(Ok(if text.trim().is_empty() {
-            "已通过 winget 安装 rustup。".into()
-        } else {
-            text
-        }))
-    } else {
-        Some(Err(if text.trim().is_empty() {
-            "winget 安装 rustup 失败。".into()
-        } else {
-            text
-        }))
-    }
+    find_on_path("winget")?;
+    Some(
+        run_streaming(
+            "winget",
+            &[
+                "install",
+                "--id",
+                "Rustlang.Rustup",
+                "-e",
+                "--silent",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+            ],
+            |_| {},
+        )
+        .and_then(|(success, text)| {
+            if success {
+                Ok(text)
+            } else {
+                Err(if text.is_empty() {
+                    "winget 安装 rustup 失败。".into()
+                } else {
+                    text
+                })
+            }
+        }),
+    )
 }
 
 fn ensure_stable_toolchain(output: &mut String) -> Result<(), String> {
     prepare_rust_environment();
-    let list = run("rustup", &["toolchain", "list"]).unwrap_or_default();
+    let list = run("rustup", &["toolchain", "list"])?;
     if !list
         .lines()
         .any(|line| line.trim_start().starts_with("stable-"))
     {
-        let result = run_capture(
+        let result = run_streaming(
             "rustup",
             &["toolchain", "install", "stable", "--profile", "default"],
+            |_| {},
         )?;
         if !result.1.trim().is_empty() {
             output.push('\n');
@@ -1074,7 +981,7 @@ fn ensure_stable_toolchain(output: &mut String) -> Result<(), String> {
         .trim()
         .is_empty()
     {
-        let result = run_capture("rustup", &["default", "stable"])?;
+        let result = run_streaming("rustup", &["default", "stable"], |_| {})?;
         if !result.0 {
             return Err("设置 Stable 为默认工具链失败。".into());
         }
@@ -1097,6 +1004,17 @@ fn prepare_rust_environment() -> Option<PathBuf> {
 }
 
 fn resolve_rustup() -> Option<PathBuf> {
+    // Test children must never resolve or mutate the user's real rustup,
+    // including when Windows known-folder APIs ignore environment overrides.
+    #[cfg(test)]
+    if let Some(home) = env::var_os("CARGO_SWEEP_MOCK_DIR") {
+        return Some(
+            PathBuf::from(home)
+                .join("cargo/bin")
+                .join(binary_name("rustup")),
+        );
+    }
+
     let mut candidates = Vec::new();
 
     if let Some(custom) = read_settings().rustup_path {
@@ -1818,13 +1736,15 @@ impl RustupProgress {
     fn complete_downloaded(&mut self) {
         let now = Instant::now();
         let meter = self.meter_values();
+        let sizes = self.component_sizes.lock().ok();
         for component in &mut self.components {
             if component.phase != "downloading" {
                 continue;
             }
-            let Some(total) = component.total_bytes else {
-                continue;
-            };
+            let total = component
+                .total_bytes
+                .or_else(|| sizes.as_ref()?.get(&component.name).copied())
+                .unwrap_or(0);
             if total == 0 || meter.bytes.saturating_sub(component.start_meter_bytes) < total {
                 continue;
             }
@@ -2168,8 +2088,10 @@ fn run_streaming_with_env<F>(
 where
     F: FnMut(&str),
 {
-    let mut command = Command::new(program);
-    command.args(args);
+    if background::current_cancelled() {
+        return Err("任务已取消。".into());
+    }
+    let mut command = rust_command(program, args);
     for name in remove_env {
         command.env_remove(name);
     }
@@ -2230,6 +2152,12 @@ where
     if let Some(control) = &task_control {
         control.clear_pid();
     }
+    // Cancellation may close both pipes before recv_timeout checks the flag.
+    // Re-read it after wait, otherwise a cancelled child looks like a command error.
+    let cancelled = cancelled
+        || task_control
+            .as_ref()
+            .is_some_and(|control| control.is_cancelled());
     let success = status.success() && !cancelled;
     let text = if cancelled {
         clean_output(&format!("{text}\n任务已取消"))
@@ -2243,13 +2171,15 @@ where
 }
 
 fn run(program: &str, args: &[&str]) -> Result<String, String> {
-    let (_, output) = run_capture(program, args)?;
+    let (success, output) = run_capture(program, args)?;
+    if !success {
+        return Err(output.trim().to_string());
+    }
     Ok(output.trim().to_string())
 }
 
 fn run_capture(program: &str, args: &[&str]) -> Result<(bool, String), String> {
-    let mut command = Command::new(program);
-    command.args(args);
+    let mut command = rust_command(program, args);
     apply_no_window(&mut command);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = command.output().map_err(|error| {
@@ -2374,12 +2304,165 @@ fn first_prefixed_line(output: &str, prefix: &str) -> Option<String> {
 fn channel_from_toolchain(toolchain: &str) -> String {
     let channel = toolchain.split('-').next().unwrap_or(toolchain);
     if channel == "stable" || channel == "beta" || channel == "nightly" {
+        let suffix = toolchain
+            .strip_prefix(channel)
+            .unwrap_or_default()
+            .trim_start_matches('-');
+        if suffix.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            return "pinned".into();
+        }
         return channel.to_string();
     }
     if channel.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         return "pinned".into();
     }
     "custom".into()
+}
+
+fn channel_toolchain<'a>(
+    toolchains: &'a [InstalledToolchain],
+    channel: &str,
+    host: Option<&str>,
+) -> Option<&'a InstalledToolchain> {
+    toolchains
+        .iter()
+        .filter(|toolchain| toolchain.channel == channel)
+        .max_by_key(|toolchain| {
+            (
+                host.is_some_and(|host| toolchain.name.ends_with(&format!("-{host}"))),
+                toolchain.default,
+                toolchain.active,
+                toolchain.rustc_version.is_some(),
+            )
+        })
+}
+
+fn installed_target<'a>(
+    status: &'a RustToolchainStatus,
+    target: &str,
+) -> Option<&'a InstalledToolchain> {
+    status
+        .toolchains
+        .iter()
+        .find(|toolchain| toolchain.name == target)
+        .or_else(|| {
+            if matches!(target, "stable" | "nightly" | "beta") {
+                channel_toolchain(&status.toolchains, target, status.host.as_deref())
+            } else {
+                status
+                    .toolchains
+                    .iter()
+                    .find(|toolchain| toolchain.name.starts_with(&format!("{target}-")))
+            }
+        })
+}
+
+fn rust_build_identity(version: &str) -> (&str, Option<&str>) {
+    let version = version
+        .trim()
+        .strip_prefix("rustc ")
+        .unwrap_or(version.trim());
+    let release = version.split_whitespace().next().unwrap_or_default();
+    let commit = version
+        .split_once('(')
+        .and_then(|(_, rest)| {
+            rest.split_whitespace()
+                .next()
+                .map(|hash| hash.trim_end_matches(')'))
+        })
+        .filter(|hash| hash.len() >= 7 && hash.chars().all(|c| c.is_ascii_hexdigit()));
+    (release, commit)
+}
+
+fn same_rust_build(actual: &str, expected: &str) -> bool {
+    let (actual_release, actual_commit) = rust_build_identity(actual);
+    let (expected_release, expected_commit) = rust_build_identity(expected);
+    if actual_release.is_empty() || actual_release != expected_release {
+        return false;
+    }
+    if let Some(expected_commit) = expected_commit {
+        return actual_commit.is_some_and(|actual_commit| {
+            actual_commit.starts_with(expected_commit) || expected_commit.starts_with(actual_commit)
+        });
+    }
+    // The nightly release number alone does not identify a daily build.
+    !expected_release.contains("nightly")
+}
+
+fn verify_installed_target(
+    status: &RustToolchainStatus,
+    target: &str,
+    expected: Option<&str>,
+) -> Result<(), String> {
+    let installed = installed_target(status, target)
+        .ok_or_else(|| format!("校验失败：rustup 执行结束，但未找到工具链 {target}。"))?;
+    let actual = installed
+        .rustc_version
+        .as_deref()
+        .filter(|version| !version.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "校验失败：工具链 {} 无法运行 rustc，请查看 rustup 输出。",
+                installed.name
+            )
+        })?;
+    if let Some(expected) = expected {
+        if !same_rust_build(actual, expected) {
+            return Err(format!("更新校验失败：{} 当前仍为 {actual}，预期为 {expected}。下载源可能尚未同步；未将本次操作标记为成功。", installed.name));
+        }
+    }
+    Ok(())
+}
+
+fn default_matches_target(status: &RustToolchainStatus, target: &str) -> bool {
+    installed_target(status, target).is_some_and(|installed| {
+        status.default_toolchain.as_deref() == Some(installed.name.as_str())
+    })
+}
+
+fn verify_operation_success(
+    success: bool,
+    output: &mut String,
+    status: &RustToolchainStatus,
+    target: &str,
+    expected: Option<&str>,
+) -> bool {
+    if background::current_cancelled() {
+        if !output.contains("任务已取消") {
+            append_output(output, "任务已取消。");
+        }
+        return false;
+    }
+    if !success {
+        return false;
+    }
+    match verify_installed_target(status, target, expected) {
+        Ok(()) => true,
+        Err(error) => {
+            append_output(output, &error);
+            false
+        }
+    }
+}
+
+fn detect_after_operation() -> Result<RustToolchainStatus, String> {
+    let status = detect()
+        .map_err(|error| format!("命令已执行，但无法确认操作后的实际工具链状态：{error}"))?;
+    if !status.rustup_installed {
+        return Err("命令已执行，但无法运行 rustup 确认实际工具链状态。".into());
+    }
+    Ok(status)
+}
+
+fn rust_command(program: &str, args: &[&str]) -> Command {
+    let executable = if program == "rustup" {
+        resolve_rustup().unwrap_or_else(|| PathBuf::from(program))
+    } else {
+        PathBuf::from(program)
+    };
+    let mut command = Command::new(executable);
+    command.args(args);
+    command
 }
 
 fn strip_prefix(value: &str, prefix: &str) -> String {
@@ -2514,6 +2597,18 @@ LLVM version: 23.1.1";
     }
 
     #[test]
+    fn command_wrapper_returns_successful_output() {
+        let output = run("rustc", &["--version"]).unwrap();
+        assert!(output.starts_with("rustc "));
+    }
+
+    #[test]
+    fn command_wrapper_propagates_failed_exit_status() {
+        let error = run("rustc", &["--cargo-sweep-invalid-option"]).unwrap_err();
+        assert!(error.contains("cargo-sweep-invalid-option"));
+    }
+
+    #[test]
     fn streams_command_output_without_deadlock() {
         let mut lines = 0usize;
         let (success, text) = run_streaming("rustc", &["--version"], |_| {
@@ -2602,6 +2697,41 @@ LLVM version: 23.1.1";
                 "77%".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn downloaded_component_uses_asynchronously_discovered_size() {
+        let meter = Arc::new(Mutex::new(DownloadMeter {
+            bytes: 149,
+            speed_bps: 20,
+        }));
+        let mut progress = RustupProgress::new(Arc::clone(&meter));
+        progress.phase = "download".into();
+        progress.components.push(TrackedComponent {
+            name: "rustfmt".into(),
+            phase: "downloading".into(),
+            started: Some(Instant::now()),
+            start_meter_bytes: 50,
+            ..TrackedComponent::default()
+        });
+
+        // Missing sizes must not mark a download complete.
+        assert_eq!(progress.tick().phase, "download");
+        progress
+            .component_sizes
+            .lock()
+            .unwrap()
+            .insert("rustfmt".into(), 100);
+        assert_eq!(progress.tick().phase, "download");
+
+        meter.lock().unwrap().bytes = 150;
+        let snapshot = progress.tick();
+        assert_eq!(snapshot.phase, "install");
+        assert_eq!(snapshot.components[0].phase, "done");
+        assert_eq!(snapshot.components[0].percent, 100);
+        assert_eq!(snapshot.components[0].downloaded_bytes, 100);
+        assert_eq!(snapshot.components[0].total_bytes, 100);
+        assert_eq!(snapshot.message, "组件下载完成，正在安装工具链…");
     }
 
     #[test]
@@ -2769,3 +2899,7 @@ LLVM version: 23.1.1";
         );
     }
 }
+
+#[cfg(test)]
+#[path = "rust_toolchain_tests.rs"]
+mod operation_tests;

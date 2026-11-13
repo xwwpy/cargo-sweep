@@ -79,6 +79,7 @@ pub fn apply(
     dist_server: Option<String>,
     update_root: Option<String>,
 ) -> Result<RustupSourceStatus, String> {
+    let _mutation = crate::rust_toolchain::begin_mutation()?;
     let source_id = source_id.trim();
     if source_id == "official" {
         backup_current_source()?;

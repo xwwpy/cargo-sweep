@@ -160,6 +160,7 @@ fn migrate_home(
     target: String,
     create_link: bool,
 ) -> Result<CargoHomeMigrationResult, String> {
+    let _mutation = crate::rust_toolchain::begin_mutation()?;
     let before = home_status(kind)?;
     let default = kind.default_path()?;
     let current = PathBuf::from(&before.current);
@@ -285,6 +286,7 @@ fn migrate_home(
 }
 
 pub fn set_home_path(kind: &str, target: String) -> Result<CargoHomeStatus, String> {
+    let _mutation = crate::rust_toolchain::begin_mutation()?;
     let kind = match kind {
         "cargo" => HomeKind::Cargo,
         "rustup" => HomeKind::Rustup,
@@ -434,8 +436,7 @@ fn copy_tree(source: &Path, target: &Path) -> Result<(u64, u64), String> {
 }
 
 fn copy_symlink(source: &Path, target: &Path) -> Result<(), String> {
-    let link_target = dunce::canonicalize(source)
-        .or_else(|_| fs::read_link(source))
+    let link_target = fs::read_link(source)
         .map_err(|error| format!("读取符号链接 {} 失败：{error}", source.display()))?;
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)
@@ -680,6 +681,31 @@ fn apply_no_window(command: &mut Command) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn copied_relative_symlinks_survive_source_removal() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let source = temp.path().join("source");
+        let target = temp.path().join("target");
+        fs::create_dir_all(source.join("bin")).unwrap();
+        fs::write(source.join("bin/rustup"), b"rustup proxy").unwrap();
+        std::os::unix::fs::symlink("rustup", source.join("bin/rustc")).unwrap();
+        std::os::unix::fs::symlink("missing", source.join("bin/dangling")).unwrap();
+
+        copy_tree(&source, &target).unwrap();
+        fs::remove_dir_all(&source).unwrap();
+
+        assert_eq!(
+            fs::read_link(target.join("bin/rustc")).unwrap(),
+            PathBuf::from("rustup")
+        );
+        assert_eq!(fs::read(target.join("bin/rustc")).unwrap(), b"rustup proxy");
+        assert_eq!(
+            fs::read_link(target.join("bin/dangling")).unwrap(),
+            PathBuf::from("missing")
+        );
+    }
 
     #[test]
     fn formats_sizes() {

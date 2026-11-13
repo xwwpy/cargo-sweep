@@ -22,6 +22,9 @@ impl TaskControl {
 
     pub fn set_pid(&self, pid: u32) {
         self.pid.store(pid, Ordering::SeqCst);
+        if self.is_cancelled() {
+            kill_process_tree(pid);
+        }
     }
 
     pub fn clear_pid(&self) {
@@ -246,6 +249,19 @@ pub fn cleanup_artifacts(_started_ms: u64, kind: &str) -> CleanupReport {
             message: "空间清理任务没有下载缓存等中间文件".into(),
         };
     }
+    // Checking the registry alone races a newly started install/update. Hold
+    // the same mutation guard while touching rustup's download and temp files.
+    let _mutation = match crate::rust_toolchain::begin_mutation() {
+        Ok(guard) => guard,
+        Err(_) => {
+            return CleanupReport {
+                removed_files: 0,
+                freed_bytes: 0,
+                skipped: true,
+                message: "Rust 环境正在变更，已跳过临时文件清理".into(),
+            }
+        }
+    };
     if active_toolchain_tasks() {
         return CleanupReport {
             removed_files: 0,

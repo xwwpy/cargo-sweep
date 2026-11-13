@@ -198,6 +198,15 @@ export function startTask<T>(options: StartTaskOptions<T>): string {
       if (!current) {
         return;
       }
+      // Verification can fail after rustup exits successfully. Keep the final
+      // backend diagnostic in the task log, not only in the transient page toast.
+      if (typeof result === "object" && result !== null && "output" in result && typeof result.output === "string") {
+        const seen = new Set(current.output);
+        for (const line of result.output.split(/\r?\n/)) {
+          if (line.trim() && !seen.has(line)) { current.output.push(line); seen.add(line); }
+        }
+        if (current.output.length > MAX_OUTPUT_LINES) current.output.splice(0, current.output.length - MAX_OUTPUT_LINES);
+      }
       if (current.cancelRequested) {
         current.status = "cancelled";
         current.message = "任务已取消";
@@ -212,7 +221,7 @@ export function startTask<T>(options: StartTaskOptions<T>): string {
         current.status = failed ? "failed" : "completed";
         current.percent = failed ? Math.min(current.percent, 99) : 100;
         current.message = failed
-          ? "任务结束，但命令返回了失败状态"
+          ? "任务未通过结果校验或命令执行失败"
           : options.successMessage || "任务完成";
         current.phase = failed ? "failed" : "done";
       }

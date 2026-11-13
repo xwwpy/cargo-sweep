@@ -45,7 +45,7 @@ pub fn detect() -> Result<CargoSourceStatus, String> {
     let mut warning = None;
 
     if cargo_home.join("config").is_file() && cargo_home.join("config.toml").is_file() {
-        warning = Some("config 与 config.toml 同时存在，Cargo 将优先使用 config.toml。".into());
+        warning = Some("config 与 config.toml 同时存在，Cargo 将优先使用 config。".into());
     }
 
     let contents = if config_exists {
@@ -274,16 +274,12 @@ fn cargo_home() -> Result<PathBuf, String> {
 }
 
 fn config_path(cargo_home: &Path) -> PathBuf {
-    let toml_path = cargo_home.join("config.toml");
-    if toml_path.is_file() {
-        toml_path
+    // Cargo preserves compatibility with the extensionless config when both exist.
+    let legacy = cargo_home.join("config");
+    if legacy.is_file() {
+        legacy
     } else {
-        let legacy = cargo_home.join("config");
-        if legacy.is_file() {
-            legacy
-        } else {
-            toml_path
-        }
+        cargo_home.join("config.toml")
     }
 }
 
@@ -342,6 +338,21 @@ fn cargo_version() -> Option<String> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn config_path_matches_cargo_precedence() {
+        let temp = tempdir().unwrap();
+        let legacy = temp.path().join("config");
+        let toml = temp.path().join("config.toml");
+
+        assert_eq!(config_path(temp.path()), toml);
+        fs::write(&toml, "").unwrap();
+        assert_eq!(config_path(temp.path()), toml);
+        fs::write(&legacy, "").unwrap();
+        assert_eq!(config_path(temp.path()), legacy);
+        fs::remove_file(&toml).unwrap();
+        assert_eq!(config_path(temp.path()), legacy);
+    }
 
     #[test]
     fn accepts_sparse_and_git_https_sources() {

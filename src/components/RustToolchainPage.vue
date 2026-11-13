@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { listen } from "@tauri-apps/api/event";
 import { formatBytes } from "../lib/format";
+import { sameRustBuild } from "../lib/rustVersion";
 import {
   getCachedRustLatest,
   setCachedRustLatest,
@@ -10,7 +11,6 @@ import {
 import { operationBusy as busy } from "../composables/useOperationBusy";
 import {
   activeTasks,
-  hasActiveResource,
   startTask,
   taskCurrentComponent,
 } from "../composables/useTasks";
@@ -189,6 +189,10 @@ interface CommandEntry {
   command: string;
 }
 
+const hasActiveRustTask = computed(() => activeTasks.value.some((task) =>
+  task.kind === "toolchain" || task.kind === "rustup" || task.kind === "uninstall",
+));
+
 const rustupReady = computed(() => status.value?.rustupInstalled ?? false);
 const channelViews = computed<ChannelView[]>(() => {
   const result: ChannelView[] = [];
@@ -200,12 +204,10 @@ const channelViews = computed<ChannelView[]>(() => {
   }
   return result;
 });
-const currentChannel = computed(
-  () =>
-    channelViews.value.find((channel) => channel.default) ??
-    channelViews.value.find((channel) => channel.active) ??
-    null,
-);
+const currentChannel = computed(() => {
+  const current = status.value?.activeToolchain ?? status.value?.defaultToolchain;
+  return channelViews.value.find((channel) => channel.toolchain === current) ?? null;
+});
 const activeLatest = computed(() => currentChannel.value?.latest ?? null);
 const currentVersion = computed(() => safeVersion(status.value?.version));
 const latestVersion = computed(() =>
@@ -216,14 +218,14 @@ const activeToolchainName = computed(() =>
     status.value?.activeToolchain ?? status.value?.defaultToolchain,
   ),
 );
-const currentBuild = computed(() => currentChannel.value?.currentBuild ?? null);
+const currentBuild = computed(() => buildLabel(status.value?.rustcVersion ?? null, null));
 const latestBuild = computed(() => currentChannel.value?.latestBuild ?? null);
 const currentIsLatest = computed(() => {
   const current = currentChannel.value;
   if (!current?.installed || !current.latest) {
     return null;
   }
-  return sameRelease(current.currentRelease, current.latestRelease);
+  return sameRustBuild(current.currentFull ?? current.currentRelease, current.latest.version);
 });
 const historyOptions = computed(() => latest.value?.historicalVersions ?? []);
 const installedToolchains = computed(() => status.value?.toolchains ?? []);
@@ -446,6 +448,7 @@ const sourceCommand = computed(() =>
 const sourceApplyDisabled = computed(
   () =>
     Boolean(busy.value) ||
+    hasActiveRustTask.value ||
     !rustupSource.value ||
     !sourceDistServer.value ||
     !sourceUpdateRoot.value,
@@ -518,10 +521,7 @@ function channelView(
       : null,
     updateAvailable:
       info?.installed && latestInfo
-        ? !sameRelease(
-            safeVersion(info.release) ?? safeVersion(currentFull),
-            safeVersion(latestInfo.release),
-          )
+        ? !sameRustBuild(currentFull ?? info.release, latestInfo.version)
         : null,
     active: Boolean(info?.active),
     default: Boolean(info?.default),
@@ -667,21 +667,6 @@ async function copyText(value: string) {
   ElMessage.success("命令已复制");
 }
 
-function sameRelease(left: string | null, right: string | null): boolean {
-  if (!left || !right) {
-    return false;
-  }
-  return releaseIdentity(left) === releaseIdentity(right);
-}
-
-function releaseIdentity(value: string): string {
-  return value
-    .replace(/^rustc\s+/i, "")
-    .replace(/\s*\([^)]*\)\s*$/, "")
-    .trim()
-    .toLowerCase();
-}
-
 function buildLabel(
   fullVersion: string | null,
   fallbackDate: string | null,
@@ -741,7 +726,7 @@ function actionLabel(view: ChannelView): string {
 }
 
 function canUseAction(view: ChannelView): boolean {
-  if (!rustupReady.value || busy.value) {
+  if (!rustupReady.value || busy.value || hasActiveRustTask.value) {
     return false;
   }
   if (!view.installed) {
@@ -874,7 +859,7 @@ function isChannelAtLatest(
   return Boolean(
     current?.installed &&
       target &&
-      sameRelease(current.release ?? current.rustcVersion, target.release),
+      sameRustBuild(current.rustcVersion ?? current.release, target.version),
   );
 }
 
@@ -1081,7 +1066,7 @@ async function runOperation(
   operation: () => Promise<{ success: boolean; output: string; status: RustToolchainStatus }>,
   successMessage: string,
 ) {
-  if (busy.value) {
+  if (busy.value || hasActiveRustTask.value) {
     return;
   }
   busy.value = label;
@@ -1129,16 +1114,11 @@ interface BackgroundToolchainOptions {
   successMessage: string;
   resourceKey: string;
   run: (taskId: string) => Promise<RustToolchainOperationResult>;
-  afterFinish?: (result: RustToolchainOperationResult) => void;
 }
 
 function runBackgroundToolchain(options: BackgroundToolchainOptions) {
-  if (busy.value) {
+  if (busy.value || hasActiveRustTask.value) {
     ElMessage.info("当前页面还有操作在进行，请稍候");
-    return;
-  }
-  if (hasActiveResource(options.resourceKey)) {
-    ElMessage.info("该工具链已有任务在后台运行，请等待完成或前往任务中心取消");
     return;
   }
   startTask({
@@ -1154,6 +1134,7 @@ function runBackgroundToolchain(options: BackgroundToolchainOptions) {
         actionOutput.value = errorMessage(error);
         actionSuccess.value = false;
         ElMessage.error(`${options.title}失败：${errorMessage(error)}`);
+        void load();
         return;
       }
       if (!result) {
@@ -1170,9 +1151,8 @@ function runBackgroundToolchain(options: BackgroundToolchainOptions) {
       if (result.success) {
         ElMessage.success(options.successMessage);
       } else {
-        ElMessage.warning(`${options.title}已结束，但命令返回失败`);
+        ElMessage.warning(`${options.title}未通过校验或执行失败，请查看任务日志`);
       }
-      options.afterFinish?.(result);
       void load();
       void loadLatest();
     },
@@ -1211,7 +1191,7 @@ async function installRustupAction() {
 }
 
 function openCargoHomeDialog() {
-  if (!cargoHome.value || cargoHome.value.linkExists || busy.value) {
+  if (!cargoHome.value || cargoHome.value.linkExists || busy.value || hasActiveRustTask.value) {
     return;
   }
   cargoHomeTarget.value = "";
@@ -1232,7 +1212,7 @@ async function runCargoHomeMigration() {
     ElMessage.warning("请选择新的 CARGO_HOME 目录");
     return;
   }
-  if (busy.value) {
+  if (busy.value || hasActiveRustTask.value) {
     return;
   }
   busy.value = "migrate-cargo-home";
@@ -1265,7 +1245,7 @@ async function runCargoHomeMigration() {
 }
 
 function openRustupHomeDialog() {
-  if (!cargoHome.value || cargoHome.value.rustup.linkExists || busy.value) {
+  if (!cargoHome.value || cargoHome.value.rustup.linkExists || busy.value || hasActiveRustTask.value) {
     return;
   }
   rustupHomeTarget.value = "";
@@ -1286,7 +1266,7 @@ async function runRustupHomeMigration() {
     ElMessage.warning("请选择新的 RUSTUP_HOME 目录");
     return;
   }
-  if (busy.value) {
+  if (busy.value || hasActiveRustTask.value) {
     return;
   }
   busy.value = "migrate-rustup-home";
@@ -1340,7 +1320,7 @@ async function chooseHomeLocation(kind: "cargo" | "rustup") {
   } catch {
     return;
   }
-  if (busy.value) {
+  if (busy.value || hasActiveRustTask.value) {
     return;
   }
   busy.value = `configure-${kind}`;
@@ -1410,15 +1390,12 @@ async function installChannel(view: ChannelView) {
 }
 
 async function updateChannel(view: ChannelView) {
-  if (busy.value) {
+  if (busy.value || hasActiveRustTask.value) {
     ElMessage.info("当前页面还有操作在进行，请稍候");
     return;
   }
-  if (hasActiveResource(toolchainResource(view.key))) {
-    ElMessage.info("该工具链已有任务在后台运行，请等待完成或前往任务中心取消");
-    return;
-  }
-  let shouldStart = false;
+  let updateTarget: string | null = null;
+  let expectedVersion: string | null = null;
   busy.value = `verify-${view.key}`;
   actionOutput.value = null;
   actionSuccess.value = null;
@@ -1449,7 +1426,9 @@ async function updateChannel(view: ChannelView) {
       ElMessage.success(`${view.label} 已经是最新版本`);
       return;
     }
-    shouldStart = true;
+    // Use the refreshed target, not the stale card captured before verification.
+    updateTarget = channelVersion(freshStatus, view.key)?.toolchain ?? view.key;
+    expectedVersion = target.version;
   } catch (reason) {
     actionOutput.value = errorMessage(reason);
     actionSuccess.value = false;
@@ -1458,7 +1437,7 @@ async function updateChannel(view: ChannelView) {
     stopTimer();
     busy.value = null;
   }
-  if (!shouldStart) {
+  if (!updateTarget || !expectedVersion) {
     return;
   }
   runBackgroundToolchain({
@@ -1467,45 +1446,10 @@ async function updateChannel(view: ChannelView) {
     detail: `当前 ${view.currentRelease || "未知"} → 最新 ${
       view.latestRelease || "检测中"
     }`,
-    successMessage: `${view.label} 已更新到最新版本`,
+    successMessage: `${view.label} 工具链已更新并通过版本校验`,
     resourceKey: toolchainResource(view.key),
-    run: (taskId) => updateRustToolchain(taskId, view.toolchain ?? view.key),
-    afterFinish: (result) => {
-      void verifyUpdatedChannel(view, result);
-    },
+    run: (taskId) => updateRustToolchain(taskId, updateTarget, expectedVersion),
   });
-}
-
-async function verifyUpdatedChannel(
-  view: ChannelView,
-  result: RustToolchainOperationResult,
-) {
-  if (result.output.includes("任务已取消")) {
-    return;
-  }
-  let latestAfter: LatestRustVersions;
-  try {
-    latestAfter = await refreshLatestVersions();
-  } catch (reason) {
-    actionOutput.value = `${result.output}\n\n更新命令已结束，但二次检查最新版本失败：${errorMessage(reason)}`;
-    ElMessage.warning("更新命令已结束，但无法确认最新版本");
-    return;
-  }
-  const targetAfter = latestChannelVersion(latestAfter, view.key);
-  if (!targetAfter) {
-    actionOutput.value = `${result.output}\n\n更新命令已结束，但未获取到最新版本。`;
-    actionSuccess.value = false;
-    ElMessage.warning("更新命令已结束，但未获取到最新版本");
-    return;
-  }
-  if (isChannelAtLatest(result.status, latestAfter, view.key)) {
-    actionSuccess.value = result.success;
-    actionOutput.value = `已确认 ${view.label} 更新到 ${targetAfter.release}。\n\n${result.output}`;
-    return;
-  }
-  actionSuccess.value = false;
-  actionOutput.value = `${result.output}\n\n二次校验失败：当前版本仍与最新版本 ${targetAfter.release} 不一致，请检查网络、Rustup 下载源或稍后重试。`;
-  ElMessage.warning("更新已执行，但二次校验仍未检测到最新版本");
 }
 
 async function switchChannel(view: ChannelView) {
@@ -1520,7 +1464,7 @@ async function switchChannel(view: ChannelView) {
 }
 
 async function switchToolchain(name: string) {
-  if (busy.value) {
+  if (busy.value || hasActiveRustTask.value) {
     return;
   }
   await runOperation(

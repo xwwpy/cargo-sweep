@@ -363,6 +363,7 @@ export async function setDefaultRustToolchain(
 export async function updateRustToolchain(
   taskId: string,
   target: string | null = null,
+  expectedVersion: string | null = null,
 ): Promise<RustToolchainOperationResult> {
   if (isDemoMode()) {
     return demoUpdateRustToolchain(target);
@@ -373,6 +374,7 @@ export async function updateRustToolchain(
   return invoke<RustToolchainOperationResult>("update_rust_toolchain", {
     taskId,
     target,
+    expectedVersion,
   });
 }
 
